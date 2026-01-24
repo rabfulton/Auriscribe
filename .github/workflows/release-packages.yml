@@ -45,7 +45,7 @@ jobs:
       - name: Install deps
         run: |
           dnf -y update
-          dnf -y install git gcc make rpm-build pkgconfig \
+          dnf -y install git gcc gcc-c++ make rpm-build pkgconfig \
             gtk3-devel pulseaudio-libs-devel json-c-devel libcurl-devel libX11-devel \
             which tar gzip \
             vulkan-loader-devel

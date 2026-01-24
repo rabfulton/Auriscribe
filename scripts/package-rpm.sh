@@ -34,6 +34,7 @@ URL:            https://github.com/your-org/auriscribe
 Source0:        auriscribe-${VERSION}.tar.gz
 
 BuildRequires:  gcc, make, pkgconfig
+BuildRequires:  gcc-c++
 BuildRequires:  gtk3-devel
 BuildRequires:  libayatana-appindicator-gtk3-devel
 BuildRequires:  pulseaudio-libs-devel
