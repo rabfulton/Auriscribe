@@ -25,15 +25,19 @@ typedef struct {
 #define DEFAULT_HF_REPO "ggerganov/whisper.cpp"
 
 static const ModelInfo models[] = {
-    // One-click presets (Hugging Face), aligned to whisper.cpp's naming.
+    // One-click presets (Hugging Face), aligned to whisper.cpp's models/download-ggml-model.sh list.
     // File name saved locally is the same as whisper.cpp expects: ggml-<model>.bin
-    {"tiny.en",         "Tiny (English)",           "ggml-tiny.en.bin",           75,   NULL, "main", "ggml-tiny.en.bin"},
-    {"base.en",         "Base (English)",           "ggml-base.en.bin",           142,  NULL, "main", "ggml-base.en.bin"},
-    {"small.en",        "Small (English)",          "ggml-small.en.bin",          487,  NULL, "main", "ggml-small.en.bin"},
-    {"small",           "Small (Multilingual)",     "ggml-small.bin",             487,  NULL, "main", "ggml-small.bin"},
-    {"medium.en",       "Medium (English)",         "ggml-medium.en.bin",         1500, NULL, "main", "ggml-medium.en.bin"},
-    {"large-v3-turbo",  "Large-v3 Turbo",           "ggml-large-v3-turbo.bin",    1600, NULL, "main", "ggml-large-v3-turbo.bin"},
-    {"large-v3-turbo-q5_0", "Large-v3 Turbo (Q5_0)", "ggml-large-v3-turbo-q5_0.bin", 1200, NULL, "main", "ggml-large-v3-turbo-q5_0.bin"},
+    //
+    // Keep this list intentionally short and opinionated for end users.
+    {"medium.en-q5_0",      "Medium (English, Q5_0)",      "ggml-medium.en-q5_0.bin",      0, NULL, "main", "ggml-medium.en-q5_0.bin"},
+    {"medium-q5_0",         "Medium (Multilingual, Q5_0)", "ggml-medium-q5_0.bin",         0, NULL, "main", "ggml-medium-q5_0.bin"},
+    {"medium.en",           "Medium (English)",            "ggml-medium.en.bin",           0, NULL, "main", "ggml-medium.en.bin"},
+    {"medium",              "Medium (Multilingual)",       "ggml-medium.bin",              0, NULL, "main", "ggml-medium.bin"},
+
+    {"large-v3-turbo-q5_0", "Large-v3 Turbo (Q5_0)",       "ggml-large-v3-turbo-q5_0.bin", 0, NULL, "main", "ggml-large-v3-turbo-q5_0.bin"},
+    {"large-v3-turbo",      "Large-v3 Turbo",              "ggml-large-v3-turbo.bin",      0, NULL, "main", "ggml-large-v3-turbo.bin"},
+    {"large-v3-q5_0",       "Large-v3 (Q5_0)",             "ggml-large-v3-q5_0.bin",       0, NULL, "main", "ggml-large-v3-q5_0.bin"},
+    {"large-v3",            "Large-v3",                    "ggml-large-v3.bin",            0, NULL, "main", "ggml-large-v3.bin"},
     {NULL, NULL, NULL, 0, NULL, NULL, NULL}
 };
 
@@ -373,6 +377,7 @@ void download_dialog_show(GtkWindow *parent, ModelDownloadedCallback cb, void *u
         }
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(dd->model_combo), buf);
     }
+    // Default to a good "everyday" model for most users.
     gtk_combo_box_set_active(GTK_COMBO_BOX(dd->model_combo), 0);
     gtk_widget_set_hexpand(dd->model_combo, TRUE);
     gtk_box_pack_start(GTK_BOX(hbox), dd->model_combo, TRUE, TRUE, 0);
@@ -392,6 +397,18 @@ void download_dialog_show(GtkWindow *parent, ModelDownloadedCallback cb, void *u
     dd->status_label = gtk_label_new("Select a model and click Download");
     gtk_widget_set_halign(dd->status_label, GTK_ALIGN_START);
     gtk_box_pack_start(GTK_BOX(content), dd->status_label, FALSE, FALSE, 0);
+
+    // Recommendations
+    GtkWidget *rec_label = gtk_label_new(
+        "Recommendations:\n"
+        "  • English: Medium (English, Q5_0)\n"
+        "  • Multiple languages: Medium (Multilingual, Q5_0)\n"
+        "  • Best accuracy: Large-v3 Turbo (Q5_0), then Large-v3 Turbo\n"
+        "Q5_0 models use less RAM/VRAM with slightly lower accuracy.");
+    gtk_widget_set_halign(rec_label, GTK_ALIGN_START);
+    gtk_label_set_xalign(GTK_LABEL(rec_label), 0.0f);
+    gtk_label_set_selectable(GTK_LABEL(rec_label), TRUE);
+    gtk_box_pack_start(GTK_BOX(content), rec_label, FALSE, FALSE, 0);
 
     // Source info
     const char *repo = getenv("XFCE_WHISPER_HF_REPO");

@@ -71,7 +71,7 @@ static char *strdup_safe(const char *s) {
 
 Config *config_new_default(void) {
     Config *cfg = calloc(1, sizeof(Config));
-    cfg->model_id = strdup("whisper-small");
+    cfg->model_id = strdup("medium.en-q5_0");
     cfg->hotkey = strdup("<Super>space");
     cfg->language = strdup("en");
     cfg->paste_method = strdup("auto");

@@ -19,6 +19,7 @@ static gboolean finalize_paste_idle(gpointer data);
 static void cancel_model_unload_timer(App *a);
 static void schedule_model_unload_timer(App *a);
 static gboolean unload_model_timeout_cb(gpointer data);
+static void pad_recording_tail(App *a);
 
 typedef struct {
     float *samples;
@@ -81,6 +82,18 @@ static bool ensure_rec_capacity(App *a, size_t additional) {
     a->rec_buffer = nbuf;
     a->rec_capacity = new_cap;
     return true;
+}
+
+static void pad_recording_tail(App *a) {
+    if (!a) return;
+    if (!a->rec_buffer || a->rec_count == 0) return;
+
+    // Add a small amount of trailing silence. Without it, Whisper can sometimes
+    // miss the last token/word when audio ends abruptly at a chunk boundary.
+    const size_t pad = (size_t)(SAMPLE_RATE * 0.30f); // ~300ms
+    if (!ensure_rec_capacity(a, pad)) return;
+    memset(a->rec_buffer + a->rec_count, 0, pad * sizeof(float));
+    a->rec_count += pad;
 }
 
 void app_init(GtkApplication *gtk_app) {
@@ -179,11 +192,7 @@ static gboolean unload_model_timeout_cb(gpointer data) {
     if (a->state != STATE_IDLE) return G_SOURCE_REMOVE;
     if (!transcriber_is_loaded(a->transcriber)) return G_SOURCE_REMOVE;
 
-    const gint64 now_us = g_get_monotonic_time();
-    if (a->model_last_used_us && (now_us - a->model_last_used_us) < (15 * G_USEC_PER_SEC)) {
-        return G_SOURCE_REMOVE;
-    }
-
+    fprintf(stderr, "Idle timeout reached; unloading model to free memory\n");
     transcriber_unload(a->transcriber);
     a->model_unload_timeout_id = 0;
     return G_SOURCE_REMOVE;
@@ -222,6 +231,7 @@ static void on_audio_data(const float *samples, size_t count, void *userdata) {
     // If we just transitioned from speech to silence, enqueue the chunk for transcription.
     if (vr.speech_ended) {
         if (a->rec_count > 0) {
+            pad_recording_tail(a);
             AudioChunk *chunk = calloc(1, sizeof(*chunk));
             chunk->samples = a->rec_buffer;
             chunk->count = a->rec_count;
@@ -356,6 +366,7 @@ void app_stop_recording(void) {
 
     // Enqueue any trailing speech.
     if (app->rec_count > 0) {
+        pad_recording_tail(app);
         AudioChunk *chunk = calloc(1, sizeof(*chunk));
         chunk->samples = app->rec_buffer;
         chunk->count = app->rec_count;
