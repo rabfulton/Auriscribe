@@ -34,6 +34,14 @@ typedef struct {
 static int chunk_queue_sentinel;
 #define CHUNK_QUEUE_SENTINEL ((gpointer) &chunk_queue_sentinel)
 
+static const char *env_get(const char *preferred, const char *legacy) {
+    const char *v = preferred ? getenv(preferred) : NULL;
+    if (v && *v) return v;
+    v = legacy ? getenv(legacy) : NULL;
+    if (v && *v) return v;
+    return NULL;
+}
+
 static unsigned long x11_get_active_window(void) {
     Display *dpy = XOpenDisplay(NULL);
     if (!dpy) return 0;
@@ -202,7 +210,7 @@ static void on_audio_data(const float *samples, size_t count, void *userdata) {
     App *a = userdata;
     if (a->state != STATE_RECORDING) return;
     
-    if (getenv("XFCE_WHISPER_DEBUG_AUDIO")) {
+    if (env_get("AURISCRIBE_DEBUG_AUDIO", "XFCE_WHISPER_DEBUG_AUDIO")) {
         float max = 0;
         for (size_t i = 0; i < count; i++) {
             float abs_val = samples[i] > 0 ? samples[i] : -samples[i];

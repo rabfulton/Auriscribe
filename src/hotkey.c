@@ -10,8 +10,16 @@
 
 static int grab_error = 0;
 
+static const char *env_get(const char *preferred, const char *legacy) {
+    const char *v = preferred ? getenv(preferred) : NULL;
+    if (v && *v) return v;
+    v = legacy ? getenv(legacy) : NULL;
+    if (v && *v) return v;
+    return NULL;
+}
+
 static bool hotkey_debug_enabled(void) {
-    const char *v = getenv("XFCE_WHISPER_DEBUG_HOTKEY");
+    const char *v = env_get("AURISCRIBE_DEBUG_HOTKEY", "XFCE_WHISPER_DEBUG_HOTKEY");
     return v && *v && strcmp(v, "0") != 0;
 }
 

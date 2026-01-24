@@ -2,6 +2,39 @@
 
 Lightweight, offline speech-to-text for Linux desktops (tray app). Built on whisper.cpp.
 
+## Install
+
+### Debian/Ubuntu (.deb)
+
+Download `auriscribe_*.deb` from the GitHub Releases page:
+
+```bash
+sudo dpkg -i ./auriscribe_*.deb
+sudo apt-get -f install
+```
+
+### Fedora/RHEL (.rpm)
+
+Download `auriscribe-*.rpm` from the GitHub Releases page:
+
+```bash
+sudo dnf install ./auriscribe-*.rpm
+```
+
+### Arch Linux (AUR)
+
+- Package: `https://aur.archlinux.org/packages/auriscribe`
+
+```bash
+# Using an AUR helper
+yay -S auriscribe
+
+# Manual
+git clone https://aur.archlinux.org/auriscribe.git
+cd auriscribe
+makepkg -si
+```
+
 ## Quick Start
 
 ```bash
@@ -17,10 +50,6 @@ make
 # Run
 ./auriscribe
 ```
-
-## Arch Linux (AUR)
-
-- Package: `https://aur.archlinux.org/packages/auriscribe`
 
 ## Download a Model
 
@@ -43,16 +72,19 @@ Autostart: enable **Start Auriscribe on login** in Settings.
 - json-c
 - libcurl
 - X11 (for global hotkeys on X11)
-- xdotool or wtype (for text input)
+- xdotool (for text input on X11)
 - Optional (faster Whisper): Vulkan dev/runtime (e.g. `libvulkan-dev`)
 
 ## Performance knobs
 
-- `XFCE_WHISPER_VULKAN=0` disables Vulkan build in `scripts/setup-whisper.sh`
-- `XFCE_WHISPER_REQUIRE_VULKAN=0` allows CPU-only builds (not recommended)
-- `XFCE_WHISPER_NO_GPU=1` forces CPU at runtime
-- `XFCE_WHISPER_GPU_DEVICE=0` selects GPU device index
-- `XFCE_WHISPER_THREADS=8` sets Whisper CPU thread count
+- `AURISCRIBE_VULKAN=0` disables the Vulkan backend build (not recommended)
+- `AURISCRIBE_REQUIRE_VULKAN=0` allows CPU-only builds (not recommended)
+- `AURISCRIBE_NO_GPU=1` forces CPU at runtime
+- `AURISCRIBE_GPU_DEVICE=0` selects GPU device index
+- `AURISCRIBE_THREADS=8` sets Whisper CPU thread count
+- `AURISCRIBE_HF_REPO=ggerganov/whisper.cpp` overrides the Hugging Face model repo
+
+Legacy env vars (`XFCE_WHISPER_*`) are still accepted for backwards compatibility.
 
 ## License
 

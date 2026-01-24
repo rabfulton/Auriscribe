@@ -7,6 +7,14 @@
 // whisper.cpp header
 #include "whisper.h"
 
+static const char *env_get(const char *preferred, const char *legacy) {
+    const char *v = preferred ? getenv(preferred) : NULL;
+    if (v && *v) return v;
+    v = legacy ? getenv(legacy) : NULL;
+    if (v && *v) return v;
+    return NULL;
+}
+
 static int transcriber_default_threads(void) {
     long n = sysconf(_SC_NPROCESSORS_ONLN);
     if (n < 1) n = 1;
@@ -15,7 +23,7 @@ static int transcriber_default_threads(void) {
 }
 
 static int transcriber_threads(void) {
-    const char *env = getenv("XFCE_WHISPER_THREADS");
+    const char *env = env_get("AURISCRIBE_THREADS", "XFCE_WHISPER_THREADS");
     if (!env || !*env) return transcriber_default_threads();
     int n = atoi(env);
     if (n < 1) n = 1;
@@ -41,12 +49,12 @@ bool transcriber_load(Transcriber *t, EngineType type, const char *model_path) {
         struct whisper_context_params params = whisper_context_default_params();
 
         // Prefer GPU (Vulkan/CUDA/Metal/etc.) when whisper.cpp was built with it.
-        // Set XFCE_WHISPER_NO_GPU=1 to force CPU.
-        if (getenv("XFCE_WHISPER_NO_GPU")) {
+        // Set AURISCRIBE_NO_GPU=1 to force CPU.
+        if (env_get("AURISCRIBE_NO_GPU", "XFCE_WHISPER_NO_GPU")) {
             params.use_gpu = false;
         }
 
-        const char *gpu_device = getenv("XFCE_WHISPER_GPU_DEVICE");
+        const char *gpu_device = env_get("AURISCRIBE_GPU_DEVICE", "XFCE_WHISPER_GPU_DEVICE");
         if (gpu_device && *gpu_device) {
             params.gpu_device = atoi(gpu_device);
         }

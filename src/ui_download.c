@@ -19,10 +19,18 @@ typedef struct {
     const char *hf_path;
 } ModelInfo;
 
-// Default model store (override at runtime with XFCE_WHISPER_HF_REPO).
+// Default model store (override at runtime with AURISCRIBE_HF_REPO).
 // We follow whisper.cpp's models/download-ggml-model.sh URL pattern:
 //   https://huggingface.co/<repo>/resolve/main/ggml-<model>.bin
 #define DEFAULT_HF_REPO "ggerganov/whisper.cpp"
+
+static const char *env_get(const char *preferred, const char *legacy) {
+    const char *v = preferred ? getenv(preferred) : NULL;
+    if (v && *v) return v;
+    v = legacy ? getenv(legacy) : NULL;
+    if (v && *v) return v;
+    return NULL;
+}
 
 static const ModelInfo models[] = {
     // One-click presets (Hugging Face), aligned to whisper.cpp's models/download-ggml-model.sh list.
@@ -84,7 +92,7 @@ static char *hf_build_url(const char *repo, const char *revision, const char *pa
 static char *model_to_url(const ModelInfo *model) {
     if (!model) return NULL;
 
-    const char *repo = getenv("XFCE_WHISPER_HF_REPO");
+    const char *repo = env_get("AURISCRIBE_HF_REPO", "XFCE_WHISPER_HF_REPO");
     if (!repo || !*repo) repo = model->hf_repo ? model->hf_repo : DEFAULT_HF_REPO;
 
     return hf_build_url(repo, model->hf_revision, model->hf_path);
@@ -411,7 +419,7 @@ void download_dialog_show(GtkWindow *parent, ModelDownloadedCallback cb, void *u
     gtk_box_pack_start(GTK_BOX(content), rec_label, FALSE, FALSE, 0);
 
     // Source info
-    const char *repo = getenv("XFCE_WHISPER_HF_REPO");
+    const char *repo = env_get("AURISCRIBE_HF_REPO", "XFCE_WHISPER_HF_REPO");
     if (!repo || !*repo) repo = DEFAULT_HF_REPO;
     char src_info[256];
     snprintf(src_info, sizeof(src_info), "Source: Hugging Face (%s)", repo);

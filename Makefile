@@ -41,6 +41,8 @@ SYSCONFDIR ?= /etc
 
 all: $(TARGET)
 
+REQUIRE_VULKAN := $(if $(AURISCRIBE_REQUIRE_VULKAN),$(AURISCRIBE_REQUIRE_VULKAN),$(if $(XFCE_WHISPER_REQUIRE_VULKAN),$(XFCE_WHISPER_REQUIRE_VULKAN),1))
+
 $(TARGET): $(OBJS) $(WHISPER_LIB)
 	$(CC) -o $@ $(OBJS) $(WHISPER_LIB) $(LDFLAGS)
 
@@ -48,9 +50,9 @@ $(WHISPER_LIB):
 ifeq ($(shell $(PKG_CONFIG) --exists vulkan && command -v glslc >/dev/null 2>&1 && echo yes),yes)
 	$(MAKE) -C $(WHISPER_DIR) GGML_VULKAN=1 libwhisper.a
 else
-ifneq ($(XFCE_WHISPER_REQUIRE_VULKAN),0)
+ifneq ($(REQUIRE_VULKAN),0)
 	@echo "Error: Vulkan build required but not detected (need pkg-config vulkan + glslc)." >&2
-	@echo "Install Vulkan dev packages + glslc, or run: make XFCE_WHISPER_REQUIRE_VULKAN=0" >&2
+	@echo "Install Vulkan dev packages + glslc, or run: make AURISCRIBE_REQUIRE_VULKAN=0" >&2
 	@exit 1
 endif
 	$(MAKE) -C $(WHISPER_DIR) libwhisper.a
