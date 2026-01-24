@@ -49,6 +49,7 @@ Autostart: enable **Start Auriscribe on login** in Settings.
 ## Performance knobs
 
 - `XFCE_WHISPER_VULKAN=0` disables Vulkan build in `scripts/setup-whisper.sh`
+- `XFCE_WHISPER_REQUIRE_VULKAN=0` allows CPU-only builds (not recommended)
 - `XFCE_WHISPER_NO_GPU=1` forces CPU at runtime
 - `XFCE_WHISPER_GPU_DEVICE=0` selects GPU device index
 - `XFCE_WHISPER_THREADS=8` sets Whisper CPU thread count

@@ -41,7 +41,7 @@ BuildRequires:  json-c-devel
 BuildRequires:  libcurl-devel
 BuildRequires:  libX11-devel
 BuildRequires:  vulkan-loader-devel
-BuildRequires:  shaderc
+BuildRequires:  /usr/bin/glslc
 
 Requires:       gtk3
 Requires:       libayatana-appindicator-gtk3

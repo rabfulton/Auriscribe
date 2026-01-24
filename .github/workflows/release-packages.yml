@@ -48,9 +48,12 @@ jobs:
           dnf -y install git gcc make rpm-build pkgconfig \
             gtk3-devel pulseaudio-libs-devel json-c-devel libcurl-devel libX11-devel \
             which tar gzip \
-            vulkan-loader-devel shaderc
+            vulkan-loader-devel
           # Fedora names the Ayatana GTK3 appindicator package differently than Debian/Ubuntu.
           dnf -y install libayatana-appindicator-gtk3-devel || dnf -y install libayatana-appindicator-devel
+          # whisper.cpp Vulkan backend needs glslc at build time; install by file provide so
+          # we don't depend on a specific package name across Fedora variants.
+          dnf -y install '*/glslc'
 
       - uses: actions/checkout@v4
         with:
