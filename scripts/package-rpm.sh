@@ -22,7 +22,10 @@ trap 'rm -rf "$TOPDIR"' EXIT
 mkdir -p "$TOPDIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
 TARBALL="$TOPDIR/SOURCES/auriscribe-${VERSION}.tar.gz"
-git archive --format=tar.gz --prefix="auriscribe-${VERSION}/" -o "$TARBALL" HEAD
+# GitHub Actions can run with a workspace owner mismatch, causing:
+# "fatal: detected dubious ownership in repository".
+# Use a per-command safe.directory override so rpm packaging works in CI.
+git -c safe.directory="$ROOT_DIR" archive --format=tar.gz --prefix="auriscribe-${VERSION}/" -o "$TARBALL" HEAD
 
 cat > "$TOPDIR/SPECS/auriscribe.spec" <<EOF
 Name:           auriscribe
