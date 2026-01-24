@@ -22,6 +22,9 @@ jobs:
             build-essential pkg-config git curl \
             libgtk-3-dev libayatana-appindicator3-dev libpulse-dev libjson-c-dev libcurl4-openssl-dev libx11-dev \
             dpkg-dev
+          # Vulkan backend build deps (best effort across ubuntu-latest variants)
+          sudo apt-get install -y libvulkan-dev || true
+          sudo apt-get install -y glslc || sudo apt-get install -y shaderc || true
 
       - name: Build whisper.cpp
         run: ./scripts/setup-whisper.sh
@@ -43,8 +46,11 @@ jobs:
         run: |
           dnf -y update
           dnf -y install git gcc make rpm-build pkgconfig \
-            gtk3-devel ayatana-appindicator3-devel pulseaudio-libs-devel json-c-devel libcurl-devel libX11-devel \
-            which tar gzip
+            gtk3-devel pulseaudio-libs-devel json-c-devel libcurl-devel libX11-devel \
+            which tar gzip \
+            vulkan-loader-devel shaderc
+          # Fedora names the Ayatana GTK3 appindicator package differently than Debian/Ubuntu.
+          dnf -y install libayatana-appindicator-gtk3-devel || dnf -y install libayatana-appindicator-devel
 
       - uses: actions/checkout@v4
         with:
@@ -61,4 +67,3 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.rpm
-

@@ -3,18 +3,14 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-WHISPER_VERSION="v1.7.2"
-
 echo "Setting up whisper.cpp..."
 
-mkdir -p libs
-cd libs
-
-if [ ! -d "whisper.cpp" ]; then
-    git clone --depth 1 --branch "$WHISPER_VERSION" https://github.com/ggerganov/whisper.cpp.git
+if [ ! -d "libs/whisper.cpp" ]; then
+    echo "Error: libs/whisper.cpp not found (this repo vendors whisper.cpp)."
+    exit 1
 fi
 
-cd whisper.cpp
+cd libs/whisper.cpp
 
 # Build static library
 make clean 2>/dev/null || true
@@ -23,12 +19,12 @@ make clean 2>/dev/null || true
 # Disable by setting XFCE_WHISPER_VULKAN=0.
 GGML_VULKAN_FLAG=""
 if [ "${XFCE_WHISPER_VULKAN:-1}" != "0" ]; then
-    if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists vulkan; then
+    if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists vulkan && command -v glslc >/dev/null 2>&1; then
         GGML_VULKAN_FLAG="GGML_VULKAN=1"
         echo "Vulkan detected via pkg-config; building whisper.cpp with GGML_VULKAN=1"
     else
         echo "Vulkan not detected (missing pkg-config entry). Building whisper.cpp CPU-only."
-        echo "To enable Vulkan install Vulkan dev packages (e.g. libvulkan-dev) and rerun."
+        echo "To enable Vulkan install Vulkan dev packages + glslc (Debian/Ubuntu: libvulkan-dev + glslc/shaderc; Fedora: vulkan-loader-devel + shaderc)."
     fi
 else
     echo "XFCE_WHISPER_VULKAN=0 set; building whisper.cpp CPU-only."

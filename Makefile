@@ -45,7 +45,7 @@ $(TARGET): $(OBJS) $(WHISPER_LIB)
 	$(CC) -o $@ $(OBJS) $(WHISPER_LIB) $(LDFLAGS)
 
 $(WHISPER_LIB):
-ifeq ($(shell $(PKG_CONFIG) --exists vulkan && echo yes),yes)
+ifeq ($(shell $(PKG_CONFIG) --exists vulkan && command -v glslc >/dev/null 2>&1 && echo yes),yes)
 	$(MAKE) -C $(WHISPER_DIR) GGML_VULKAN=1 libwhisper.a
 else
 	$(MAKE) -C $(WHISPER_DIR) libwhisper.a

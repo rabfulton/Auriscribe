@@ -35,18 +35,21 @@ Source0:        auriscribe-${VERSION}.tar.gz
 
 BuildRequires:  gcc, make, pkgconfig
 BuildRequires:  gtk3-devel
-BuildRequires:  ayatana-appindicator3-devel
+BuildRequires:  libayatana-appindicator-gtk3-devel
 BuildRequires:  pulseaudio-libs-devel
 BuildRequires:  json-c-devel
 BuildRequires:  libcurl-devel
 BuildRequires:  libX11-devel
+BuildRequires:  vulkan-loader-devel
+BuildRequires:  shaderc
 
 Requires:       gtk3
-Requires:       ayatana-appindicator3
+Requires:       libayatana-appindicator-gtk3
 Requires:       pulseaudio-libs
 Requires:       json-c
 Requires:       libcurl
 Requires:       libX11
+Requires:       vulkan-loader
 
 %description
 A lightweight GTK tray application using whisper.cpp for offline speech-to-text.
@@ -76,4 +79,3 @@ rpmbuild --define "_topdir ${TOPDIR}" -bb "$TOPDIR/SPECS/auriscribe.spec"
 RPM_PATH="$(find "$TOPDIR/RPMS" -type f -name "*.rpm" | head -n 1)"
 cp -f "$RPM_PATH" "$OUT_DIR/"
 echo "Wrote $OUT_DIR/$(basename "$RPM_PATH")"
-
