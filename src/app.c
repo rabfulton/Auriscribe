@@ -5,6 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 
@@ -24,6 +28,7 @@ static void cancel_model_unload_timer(App *a);
 static void schedule_model_unload_timer(App *a);
 static gboolean unload_model_timeout_cb(gpointer data);
 static void pad_recording_tail(App *a);
+static void start_vulkan_warmup_async(void);
 
 typedef struct {
     float *samples;
@@ -114,6 +119,39 @@ static void pad_recording_tail(App *a) {
     a->rec_count += pad;
 }
 
+static void start_vulkan_warmup_async(void) {
+    const char *enabled = env_get("AURISCRIBE_VULKAN_WARMUP", "XFCE_WHISPER_VULKAN_WARMUP");
+    if (enabled && strcmp(enabled, "0") == 0) return;
+    if (env_get("AURISCRIBE_NO_GPU", "XFCE_WHISPER_NO_GPU")) return;
+    const bool debug = env_get("AURISCRIBE_DEBUG_VULKAN_WARMUP", "XFCE_WHISPER_DEBUG_VULKAN_WARMUP") != NULL;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Double-fork so we don't leave a zombie behind.
+        pid_t pid2 = fork();
+        if (pid2 == 0) {
+            if (!debug) {
+                int devnull = open("/dev/null", O_RDWR);
+                if (devnull >= 0) {
+                    dup2(devnull, STDIN_FILENO);
+                    dup2(devnull, STDOUT_FILENO);
+                    dup2(devnull, STDERR_FILENO);
+                    if (devnull > STDERR_FILENO) close(devnull);
+                }
+            }
+
+            execl("./auriscribe-worker", "auriscribe-worker", "--warmup-vulkan", NULL);
+            execlp("auriscribe-worker", "auriscribe-worker", "--warmup-vulkan", NULL);
+            _exit(127);
+        }
+        _exit(0);
+    }
+    if (pid < 0) return;
+
+    // Reap the intermediate child.
+    (void)waitpid(pid, NULL, 0);
+}
+
 void app_init(GtkApplication *gtk_app) {
     app = calloc(1, sizeof(App));
     app->gtk_app = gtk_app;
@@ -152,6 +190,10 @@ void app_init(GtkApplication *gtk_app) {
 
     // Start background worker for chunk transcription
     app->worker_thread = g_thread_new("transcribe-worker", worker_thread_main, app);
+
+    // Kick off Vulkan shader compilation early (in a short-lived worker process)
+    // so the first hotkey use doesn't pay the one-time pipeline compile cost.
+    start_vulkan_warmup_async();
 }
 
 void app_cleanup(void) {

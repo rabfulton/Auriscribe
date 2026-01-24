@@ -81,6 +81,7 @@ Autostart: enable **Start Auriscribe on login** in Settings.
 - `AURISCRIBE_REQUIRE_VULKAN=0` allows CPU-only builds (not recommended)
 - `AURISCRIBE_NO_GPU=1` forces CPU at runtime
 - `AURISCRIBE_GPU_DEVICE=0` selects GPU device index
+- `AURISCRIBE_VULKAN_WARMUP=0` disables one-time Vulkan shader warmup on app startup
 - `AURISCRIBE_THREADS=8` sets Whisper CPU thread count
 - `AURISCRIBE_HF_REPO=ggerganov/whisper.cpp` overrides the Hugging Face model repo
 - `AURISCRIBE_VK_ICD_FILENAMES=/path/to/icd.json` limits Vulkan ICD probing (can reduce one-time RAM overhead)

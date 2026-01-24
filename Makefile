@@ -14,7 +14,7 @@ WHISPER_LIB = $(WHISPER_DIR)/libwhisper.a
 CFLAGS += -I$(WHISPER_DIR)/ggml/include
 
 WORKER_CFLAGS = -Wall -Wextra -O2 -g -I$(WHISPER_DIR)/include -I$(WHISPER_DIR)/ggml/include
-WORKER_LDFLAGS = -lm -lpthread -lstdc++ -lgomp
+WORKER_LDFLAGS = -lm -lpthread -lstdc++ -lgomp -ldl
 ifneq ($(shell $(PKG_CONFIG) --exists vulkan && echo yes),)
     WORKER_LDFLAGS += $(shell $(PKG_CONFIG) --libs vulkan)
 endif

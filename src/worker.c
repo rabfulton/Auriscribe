@@ -4,9 +4,148 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <dlfcn.h>
 // whisper.cpp header (vendored)
 #include "whisper.h"
+#include "ggml-backend.h"
+
+static const char *env_get(const char *preferred, const char *legacy) {
+    const char *v = preferred ? getenv(preferred) : NULL;
+    if (v && *v) return v;
+    v = legacy ? getenv(legacy) : NULL;
+    if (v && *v) return v;
+    return NULL;
+}
+
+static uint64_t fnv1a64_update(uint64_t h, const void *data, size_t n) {
+    const uint8_t *p = (const uint8_t *)data;
+    for (size_t i = 0; i < n; i++) {
+        h ^= (uint64_t)p[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static uint64_t hash_file_fnv1a64(const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    uint8_t buf[8192];
+    uint64_t h = 1469598103934665603ULL;
+    for (;;) {
+        ssize_t r = read(fd, buf, sizeof(buf));
+        if (r == 0) break;
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            return 0;
+        }
+        h = fnv1a64_update(h, buf, (size_t)r);
+    }
+    close(fd);
+    return h;
+}
+
+static bool ensure_dir(const char *path) {
+    if (!path || !*path) return false;
+    if (mkdir(path, 0700) == 0) return true;
+    return errno == EEXIST;
+}
+
+static char *cache_dir(void) {
+    const char *xdg = getenv("XDG_CACHE_HOME");
+    const char *home = getenv("HOME");
+    if (xdg && *xdg) {
+        return strdup(xdg);
+    }
+    if (home && *home) {
+        size_t n = strlen(home) + strlen("/.cache") + 1;
+        char *p = malloc(n);
+        if (!p) return NULL;
+        snprintf(p, n, "%s/.cache", home);
+        return p;
+    }
+    return NULL;
+}
+
+static int warmup_vulkan(void) {
+    if (env_get("AURISCRIBE_NO_GPU", "XFCE_WHISPER_NO_GPU")) {
+        return 0;
+    }
+
+    if (ggml_cpu_has_vulkan() != 1) {
+        return 0;
+    }
+
+    const char *gpu_device_s = env_get("AURISCRIBE_GPU_DEVICE", "XFCE_WHISPER_GPU_DEVICE");
+    size_t gpu_device = 0;
+    if (gpu_device_s && *gpu_device_s) gpu_device = (size_t)atoi(gpu_device_s);
+
+    uint64_t exe_hash = hash_file_fnv1a64("/proc/self/exe");
+    const char *icd = env_get("AURISCRIBE_VK_ICD_FILENAMES", "XFCE_WHISPER_VK_ICD_FILENAMES");
+    uint64_t icd_hash = 1469598103934665603ULL;
+    if (icd && *icd) icd_hash = fnv1a64_update(icd_hash, icd, strlen(icd));
+
+    char *base = cache_dir();
+    if (!base) {
+        fprintf(stderr, "vulkan-warmup: cannot resolve cache dir\n");
+        return 0;
+    }
+
+    size_t appdir_n = strlen(base) + strlen("/auriscribe") + 1;
+    char *appdir = malloc(appdir_n);
+    if (!appdir) {
+        free(base);
+        return 0;
+    }
+    snprintf(appdir, appdir_n, "%s/auriscribe", base);
+    free(base);
+
+    if (!ensure_dir(appdir)) {
+        free(appdir);
+        return 0;
+    }
+
+    char stamp[512];
+    snprintf(stamp, sizeof(stamp),
+             "%s/vk-warmup-%016llx-dev%zu-icd%016llx.stamp",
+             appdir,
+             (unsigned long long)exe_hash,
+             gpu_device,
+             (unsigned long long)icd_hash);
+    free(appdir);
+
+    if (access(stamp, F_OK) == 0) {
+        return 0;
+    }
+
+    void (*ggml_vk_instance_init_fn)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "ggml_vk_instance_init");
+    ggml_backend_t (*ggml_backend_vk_init_fn)(size_t) = (ggml_backend_t (*)(size_t))dlsym(RTLD_DEFAULT, "ggml_backend_vk_init");
+
+    if (!ggml_vk_instance_init_fn || !ggml_backend_vk_init_fn) {
+        return 0;
+    }
+
+    ggml_vk_instance_init_fn();
+    ggml_backend_t backend = ggml_backend_vk_init_fn(gpu_device);
+    if (!backend) {
+        fprintf(stderr, "vulkan-warmup: ggml_backend_vk_init failed\n");
+        return 0;
+    }
+
+    ggml_backend_free(backend);
+
+    int fd = open(stamp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd >= 0) {
+        const char msg[] = "ok\n";
+        (void)write(fd, msg, sizeof(msg) - 1);
+        close(fd);
+    }
+
+    return 0;
+}
 
 static bool read_exact(int fd, void *buf, size_t n) {
     uint8_t *p = (uint8_t *)buf;
@@ -136,7 +275,11 @@ static char *whisper_run(struct whisper_context *ctx, const float *samples, int 
     return trim_leading_space(out);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "--warmup-vulkan") == 0) {
+        return warmup_vulkan();
+    }
+
     const int in_fd = STDIN_FILENO;
     const int out_fd = STDOUT_FILENO;
 
