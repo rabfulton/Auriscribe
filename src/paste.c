@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 #include <sys/wait.h>
 
 static bool is_wayland(void) {
@@ -34,40 +35,54 @@ const char *paste_method_name(PasteMethod method) {
     }
 }
 
-static bool paste_xdotool(const char *text) {
+static bool run_with_timeout(char *const argv[], int timeout_ms) {
     pid_t pid = fork();
     if (pid == 0) {
-        execlp("xdotool", "xdotool", "type", "--clearmodifiers", "--", text, NULL);
+        execvp(argv[0], argv);
         _exit(1);
     }
-    int status;
-    waitpid(pid, &status, 0);
+    if (pid < 0) return false;
+
+    int status = 0;
+    const int sleep_us = 10000; // 10ms
+    int waited_ms = 0;
+
+    for (;;) {
+        pid_t r = waitpid(pid, &status, WNOHANG);
+        if (r == pid) break;
+        if (r < 0) return false;
+
+        if (timeout_ms > 0 && waited_ms >= timeout_ms) {
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+            return false;
+        }
+
+        usleep(sleep_us);
+        waited_ms += sleep_us / 1000;
+    }
+
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static bool paste_xdotool(const char *text) {
+    char *argv[] = { "xdotool", "type", "--clearmodifiers", "--", (char *) text, NULL };
+    // Typing can take time for long text; avoid freezing forever if xdotool hangs.
+    return run_with_timeout(argv, 30000);
 }
 
 static bool xdotool_activate_window(unsigned long window) {
     if (!window) return true;
     char idbuf[32];
     snprintf(idbuf, sizeof(idbuf), "%lu", window);
-    pid_t pid = fork();
-    if (pid == 0) {
-        execlp("xdotool", "xdotool", "windowactivate", "--sync", idbuf, NULL);
-        _exit(1);
-    }
-    int status;
-    waitpid(pid, &status, 0);
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    // Do not use --sync here; it can block indefinitely if the window can't be focused.
+    char *argv[] = { "xdotool", "windowactivate", idbuf, NULL };
+    return run_with_timeout(argv, 1500);
 }
 
 static bool paste_wtype(const char *text) {
-    pid_t pid = fork();
-    if (pid == 0) {
-        execlp("wtype", "wtype", "--", text, NULL);
-        _exit(1);
-    }
-    int status;
-    waitpid(pid, &status, 0);
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    char *argv[] = { "wtype", "--", (char *) text, NULL };
+    return run_with_timeout(argv, 30000);
 }
 
 static bool paste_clipboard(const char *text) {

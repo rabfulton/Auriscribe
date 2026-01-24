@@ -30,6 +30,9 @@ typedef struct {
     unsigned long target_window;
 } FinalizePaste;
 
+static int chunk_queue_sentinel;
+#define CHUNK_QUEUE_SENTINEL ((gpointer) &chunk_queue_sentinel)
+
 static unsigned long x11_get_active_window(void) {
     Display *dpy = XOpenDisplay(NULL);
     if (!dpy) return 0;
@@ -128,7 +131,7 @@ void app_cleanup(void) {
     cancel_model_unload_timer(app);
 
     if (app->chunk_queue) {
-        g_async_queue_push(app->chunk_queue, NULL); // sentinel to stop worker
+        g_async_queue_push(app->chunk_queue, CHUNK_QUEUE_SENTINEL); // sentinel to stop worker
     }
     if (app->worker_thread) {
         g_thread_join(app->worker_thread);
@@ -316,8 +319,10 @@ void app_start_recording(void) {
     g_string_assign(app->accum_text, "");
     g_mutex_unlock(&app->accum_mutex);
     for (;;) {
-        AudioChunk *left = g_async_queue_try_pop(app->chunk_queue);
-        if (!left) break;
+        gpointer item = g_async_queue_try_pop(app->chunk_queue);
+        if (!item) break;
+        if (item == CHUNK_QUEUE_SENTINEL) continue;
+        AudioChunk *left = item;
         if (left->samples) free(left->samples);
         free(left);
     }
@@ -371,8 +376,9 @@ void app_stop_recording(void) {
 static gpointer worker_thread_main(gpointer data) {
     App *a = data;
     for (;;) {
-        AudioChunk *chunk = g_async_queue_pop(a->chunk_queue);
-        if (chunk == NULL) break; // sentinel
+        gpointer item = g_async_queue_pop(a->chunk_queue);
+        if (item == CHUNK_QUEUE_SENTINEL) break;
+        AudioChunk *chunk = item;
 
         if (chunk->flush) {
             free(chunk);

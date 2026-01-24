@@ -2,6 +2,7 @@
 #include <libayatana-appindicator/app-indicator.h>
 #include "app.h"
 #include <X11/Xlib.h>
+#include <string.h>
 
 static AppIndicator *indicator;
 static gboolean activated_once = FALSE;
@@ -23,6 +24,8 @@ static void on_download(GtkMenuItem *item, gpointer data) {
 
 static void on_quit(GtkMenuItem *item, gpointer data) {
     (void)item; (void)data;
+    // We hold the app (tray-only). Release the hold so quit can actually exit.
+    g_application_release(G_APPLICATION(app->gtk_app));
     g_application_quit(G_APPLICATION(app->gtk_app));
 }
 
@@ -108,8 +111,13 @@ static void on_activate(GtkApplication *gtk_app, gpointer data) {
         printf("On Wayland (or if the key is already in use), bind a key to: pkill -USR2 auriscribe\n");
     }
     
-    if (!transcriber_is_loaded(app->transcriber)) {
-        printf("No model loaded. Use 'Download Models' from tray menu.\n");
+    if (!app->config->model_path || !*app->config->model_path) {
+        printf("No model selected. Use 'Download Models' from the tray menu.\n");
+    } else {
+        printf("Model selected (loads on first use): %s\n", app->config->model_path);
+        if (strstr(app->config->model_path, "/xfce-whisper/")) {
+            printf("Note: that model path is in the legacy xfce-whisper directory; re-download if loading fails.\n");
+        }
     }
 }
 

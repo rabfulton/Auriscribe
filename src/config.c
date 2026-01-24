@@ -33,13 +33,14 @@ static void ensure_dirs(void) {
     build_paths("auriscribe", config_dir, sizeof(config_dir), data_dir, sizeof(data_dir));
     build_paths("xfce-whisper", legacy_config_dir, sizeof(legacy_config_dir), legacy_data_dir, sizeof(legacy_data_dir));
 
-    // If the new config dir doesn't exist but legacy one does, keep reading legacy.
+    // If the new config dir doesn't exist but legacy one does, keep reading legacy config.
+    //
+    // Data dir intentionally does NOT fall back to legacy:
+    // old whisper.cpp models can be incompatible with the vendored whisper.cpp version and
+    // lead to confusing "invalid model" / "not all tensors loaded" failures.
     struct stat st;
     if (stat(config_dir, &st) != 0 && stat(legacy_config_dir, &st) == 0) {
         snprintf(config_dir, sizeof(config_dir), "%s", legacy_config_dir);
-    }
-    if (stat(data_dir, &st) != 0 && stat(legacy_data_dir, &st) == 0) {
-        snprintf(data_dir, sizeof(data_dir), "%s", legacy_data_dir);
     }
 
     snprintf(models_dir, sizeof(models_dir), "%s/models", data_dir);

@@ -37,6 +37,7 @@ bool transcriber_load(Transcriber *t, EngineType type, const char *model_path) {
     transcriber_unload(t);
     
     if (type == ENGINE_WHISPER) {
+        fprintf(stderr, "Loading whisper model: %s\n", model_path ? model_path : "(null)");
         struct whisper_context_params params = whisper_context_default_params();
 
         // Prefer GPU (Vulkan/CUDA/Metal/etc.) when whisper.cpp was built with it.
@@ -70,6 +71,7 @@ bool transcriber_load(Transcriber *t, EngineType type, const char *model_path) {
 
 void transcriber_unload(Transcriber *t) {
     if (t->whisper_ctx) {
+        fprintf(stderr, "Unloading whisper model\n");
         whisper_free(t->whisper_ctx);
         t->whisper_ctx = NULL;
     }
