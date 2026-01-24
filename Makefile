@@ -9,8 +9,9 @@ LDFLAGS = $(shell $(PKG_CONFIG) --libs gtk+-3.0 ayatana-appindicator3-0.1 libpul
 
 # whisper.cpp (after building)
 WHISPER_DIR = libs/whisper.cpp
+WHISPER_LIB = $(WHISPER_DIR)/libwhisper.a
 CFLAGS += -I$(WHISPER_DIR)/include -I$(WHISPER_DIR)/ggml/include
-LDFLAGS += -L$(WHISPER_DIR) -lwhisper -lstdc++ -lgomp
+LDFLAGS += -lstdc++ -lgomp
 
 # Optional: Vulkan runtime linkage (needed when whisper.cpp is built with GGML_VULKAN=1)
 ifneq ($(shell $(PKG_CONFIG) --exists vulkan && echo yes),)
@@ -40,8 +41,15 @@ SYSCONFDIR ?= /etc
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CC) -o $@ $^ $(LDFLAGS)
+$(TARGET): $(OBJS) $(WHISPER_LIB)
+	$(CC) -o $@ $(OBJS) $(WHISPER_LIB) $(LDFLAGS)
+
+$(WHISPER_LIB):
+ifeq ($(shell $(PKG_CONFIG) --exists vulkan && echo yes),yes)
+	$(MAKE) -C $(WHISPER_DIR) GGML_VULKAN=1 libwhisper.a
+else
+	$(MAKE) -C $(WHISPER_DIR) libwhisper.a
+endif
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
