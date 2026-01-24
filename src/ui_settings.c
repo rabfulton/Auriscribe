@@ -5,6 +5,7 @@
 #include "hotkey.h"
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 typedef struct {
     Config *cfg;
@@ -18,9 +19,44 @@ typedef struct {
     GtkWidget *vad_scale;
     GtkWidget *ptt_check;
     GtkWidget *translate_check;
+    GtkWidget *autostart_check;
     GtkWidget *model_path_entry;
     bool capturing_hotkey;
 } SettingsDialog;
+
+static void autostart_set_enabled(bool enabled) {
+    const char *home = getenv("HOME");
+    const char *xdg_config = getenv("XDG_CONFIG_HOME");
+    if (!home && !xdg_config) return;
+
+    char autostart_dir[512];
+    if (xdg_config) {
+        snprintf(autostart_dir, sizeof(autostart_dir), "%s/autostart", xdg_config);
+    } else {
+        snprintf(autostart_dir, sizeof(autostart_dir), "%s/.config/autostart", home);
+    }
+
+    mkdir(autostart_dir, 0755);
+
+    char path[600];
+    snprintf(path, sizeof(path), "%s/auriscribe.desktop", autostart_dir);
+
+    if (!enabled) {
+        unlink(path);
+        return;
+    }
+
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+
+    fprintf(f,
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Auriscribe\n"
+            "Exec=auriscribe\n"
+            "X-GNOME-Autostart-enabled=true\n");
+    fclose(f);
+}
 
 static void populate_microphones(SettingsDialog *sd) {
     int count = 0;
@@ -154,6 +190,7 @@ static void settings_apply(SettingsDialog *sd) {
     // Save checkboxes
     sd->cfg->push_to_talk = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sd->ptt_check));
     sd->cfg->translate_to_english = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sd->translate_check));
+    sd->cfg->autostart = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sd->autostart_check));
 
     // Save model path
     free(sd->cfg->model_path);
@@ -161,6 +198,7 @@ static void settings_apply(SettingsDialog *sd) {
     sd->cfg->model_path = (path && *path) ? strdup(path) : NULL;
 
     config_save(sd->cfg);
+    autostart_set_enabled(sd->cfg->autostart);
 }
 
 static void on_browse_model(GtkButton *button, gpointer data) {
@@ -305,6 +343,10 @@ void settings_dialog_show(GtkWindow *parent, Config *cfg) {
     sd->translate_check = gtk_check_button_new_with_label("Translate to English");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sd->translate_check), cfg->translate_to_english);
     gtk_grid_attach(GTK_GRID(grid), sd->translate_check, 0, row++, 2, 1);
+
+    sd->autostart_check = gtk_check_button_new_with_label("Start Auriscribe on login");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sd->autostart_check), cfg->autostart);
+    gtk_grid_attach(GTK_GRID(grid), sd->autostart_check, 0, row++, 2, 1);
     
     g_signal_connect(sd->hotkey_entry, "changed", G_CALLBACK(on_hotkey_entry_changed), sd);
     g_signal_connect(sd->dialog, "key-press-event", G_CALLBACK(on_dialog_key_press), sd);

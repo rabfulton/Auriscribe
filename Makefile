@@ -31,9 +31,10 @@ OBJS = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SRCS))
 
 TARGET = auriscribe
 
-PREFIX = /usr/local
-BINDIR = $(PREFIX)/bin
-DATADIR = $(PREFIX)/share
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+DATADIR ?= $(PREFIX)/share
+SYSCONFDIR ?= /etc
 
 .PHONY: all clean install uninstall deps
 

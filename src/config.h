@@ -13,6 +13,7 @@ typedef struct {
     bool push_to_talk;
     bool translate_to_english;
     float vad_threshold;
+    bool autostart;
 } Config;
 
 // Get XDG paths

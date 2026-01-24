@@ -1,6 +1,6 @@
 # Auriscribe
 
-Lightweight speech-to-text for Linux desktops.
+Lightweight, offline speech-to-text for Linux desktops (tray app). Built on whisper.cpp.
 
 ## Quick Start
 
@@ -20,25 +20,16 @@ make
 
 ## Download a Model
 
-Use the tray menu: **Download Models...** → pick a model → **Download**.
-The app saves it under `~/.local/share/auriscribe/models/` and auto-selects it.
+Use the tray menu: **Download Models...** → choose a model → **Download**.
+Models are saved under `~/.local/share/auriscribe/models/` and the downloaded model is auto-selected.
 
 ## Usage
 
-- Press **Super+Space** to toggle recording
-- Speak, then press again to transcribe
-- Text is typed into the active window
+- Use the tray menu **Start/Stop Recording**.
+- Configure a global hotkey in **Settings...** (some desktop environments reserve `Super` shortcuts).
+- On stop, Auriscribe transcribes and inserts the text into the window that was active when recording started (X11).
 
-For Wayland, configure your compositor to send SIGUSR2:
-```bash
-# Sway example
-bindsym $mod+space exec pkill -USR2 auriscribe
-```
-
-## Model hosting
-
-Model downloads are sourced from Hugging Face by default.
-Override the repo with `XFCE_WHISPER_HF_REPO`.
+Autostart: enable **Start Auriscribe on login** in Settings.
 
 ## Dependencies
 

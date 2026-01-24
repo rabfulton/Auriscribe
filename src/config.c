@@ -77,6 +77,7 @@ Config *config_new_default(void) {
     cfg->push_to_talk = false;
     cfg->translate_to_english = false;
     cfg->vad_threshold = 0.02f;
+    cfg->autostart = false;
     return cfg;
 }
 
@@ -133,6 +134,8 @@ Config *config_load(void) {
         cfg->translate_to_english = json_object_get_boolean(val);
     if (json_object_object_get_ex(root, "vad_threshold", &val))
         cfg->vad_threshold = (float)json_object_get_double(val);
+    if (json_object_object_get_ex(root, "autostart", &val))
+        cfg->autostart = json_object_get_boolean(val);
 
     json_object_put(root);
 
@@ -160,6 +163,7 @@ void config_save(const Config *cfg) {
     json_object_object_add(root, "push_to_talk", json_object_new_boolean(cfg->push_to_talk));
     json_object_object_add(root, "translate_to_english", json_object_new_boolean(cfg->translate_to_english));
     json_object_object_add(root, "vad_threshold", json_object_new_double(cfg->vad_threshold));
+    json_object_object_add(root, "autostart", json_object_new_boolean(cfg->autostart));
 
     char path[600];
     snprintf(path, sizeof(path), "%s/settings.json", config_get_dir());
