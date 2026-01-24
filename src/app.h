@@ -31,6 +31,10 @@ typedef struct {
     
     AppState state;
 
+    // Model lifecycle (on-demand load + unload after idle)
+    guint model_unload_timeout_id;
+    gint64 model_last_used_us;
+
     // Current utterance buffer (grows dynamically)
     float *rec_buffer;
     size_t rec_count;

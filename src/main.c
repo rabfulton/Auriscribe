@@ -4,6 +4,7 @@
 #include <X11/Xlib.h>
 
 static AppIndicator *indicator;
+static gboolean activated_once = FALSE;
 
 static void on_toggle_recording(GtkMenuItem *item, gpointer data) {
     (void)item; (void)data;
@@ -76,6 +77,14 @@ static GtkWidget *create_menu(void) {
 
 static void on_activate(GtkApplication *gtk_app, gpointer data) {
     (void)data;
+
+    // GtkApplication is single-instance by default. When a second instance is
+    // launched, it sends an "activate" to the primary instance; guard against
+    // creating a second tray icon.
+    if (activated_once) {
+        return;
+    }
+    activated_once = TRUE;
     
     app_init(gtk_app);
     

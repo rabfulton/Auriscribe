@@ -16,6 +16,9 @@ static gboolean toggle_from_hotkey(gpointer data);
 static void on_model_downloaded(const char *model_id, const char *model_path, void *userdata);
 static gpointer worker_thread_main(gpointer data);
 static gboolean finalize_paste_idle(gpointer data);
+static void cancel_model_unload_timer(App *a);
+static void schedule_model_unload_timer(App *a);
+static gboolean unload_model_timeout_cb(gpointer data);
 
 typedef struct {
     float *samples;
@@ -84,6 +87,8 @@ void app_init(GtkApplication *gtk_app) {
     app->state = STATE_IDLE;
     app->hotkey_toggle_queued = 0;
     app->last_hotkey_us = 0;
+    app->model_unload_timeout_id = 0;
+    app->model_last_used_us = 0;
     app->chunk_queue = g_async_queue_new();
     g_mutex_init(&app->accum_mutex);
     app->accum_text = g_string_new("");
@@ -94,17 +99,6 @@ void app_init(GtkApplication *gtk_app) {
     
     // Initialize transcriber
     app->transcriber = transcriber_new();
-    
-    // Try to load model if configured
-    if (app->config->model_path) {
-        EngineType type = ENGINE_WHISPER;
-        if (strstr(app->config->model_id, "parakeet")) {
-            type = ENGINE_PARAKEET;
-        }
-        if (!transcriber_load(app->transcriber, type, app->config->model_path)) {
-            fprintf(stderr, "Failed to load model: %s\n", app->config->model_path);
-        }
-    }
     
     // Initialize audio
     app->audio = audio_capture_new(app->config->microphone);
@@ -130,6 +124,8 @@ void app_cleanup(void) {
     if (!app) return;
 
     app->shutting_down = true;
+
+    cancel_model_unload_timer(app);
 
     if (app->chunk_queue) {
         g_async_queue_push(app->chunk_queue, NULL); // sentinel to stop worker
@@ -157,6 +153,37 @@ void app_cleanup(void) {
     free(app->rec_buffer);
     free(app);
     app = NULL;
+}
+
+static void cancel_model_unload_timer(App *a) {
+    if (!a) return;
+    if (a->model_unload_timeout_id) {
+        g_source_remove(a->model_unload_timeout_id);
+        a->model_unload_timeout_id = 0;
+    }
+}
+
+static void schedule_model_unload_timer(App *a) {
+    if (!a) return;
+    cancel_model_unload_timer(a);
+    a->model_unload_timeout_id = g_timeout_add_seconds(15, unload_model_timeout_cb, a);
+}
+
+static gboolean unload_model_timeout_cb(gpointer data) {
+    App *a = data;
+    if (!a || a->shutting_down) return G_SOURCE_REMOVE;
+
+    if (a->state != STATE_IDLE) return G_SOURCE_REMOVE;
+    if (!transcriber_is_loaded(a->transcriber)) return G_SOURCE_REMOVE;
+
+    const gint64 now_us = g_get_monotonic_time();
+    if (a->model_last_used_us && (now_us - a->model_last_used_us) < (15 * G_USEC_PER_SEC)) {
+        return G_SOURCE_REMOVE;
+    }
+
+    transcriber_unload(a->transcriber);
+    a->model_unload_timeout_id = 0;
+    return G_SOURCE_REMOVE;
 }
 
 static void on_audio_data(const float *samples, size_t count, void *userdata) {
@@ -251,13 +278,27 @@ void app_toggle_recording(void) {
 
 void app_start_recording(void) {
     if (app->state != STATE_IDLE) return;
+
+    cancel_model_unload_timer(app);
     
     printf("app_start_recording: checking model...\n");
     fflush(stdout);
     
     if (!transcriber_is_loaded(app->transcriber)) {
-        fprintf(stderr, "No model loaded\n");
-        return;
+        if (!app->config->model_path || !*app->config->model_path) {
+            fprintf(stderr, "No model selected (open Settings to choose/download a model)\n");
+            return;
+        }
+
+        EngineType type = ENGINE_WHISPER;
+        if (app->config->model_id && strstr(app->config->model_id, "parakeet")) {
+            type = ENGINE_PARAKEET;
+        }
+
+        if (!transcriber_load(app->transcriber, type, app->config->model_path)) {
+            fprintf(stderr, "Failed to load model: %s\n", app->config->model_path);
+            return;
+        }
     }
     
     printf("app_start_recording: model OK, starting audio...\n");
@@ -388,6 +429,10 @@ static gboolean finalize_paste_idle(gpointer data) {
         gtk_menu_item_set_label(GTK_MENU_ITEM(app->status_item), "Ready");
     }
 
+    // Model was just used for transcription; schedule unload after idle.
+    app->model_last_used_us = g_get_monotonic_time();
+    schedule_model_unload_timer(app);
+
     // Ensure we have an empty buffer ready for the next recording session
     if (!app->rec_buffer) {
         app->rec_capacity = SAMPLE_RATE * 10;
@@ -417,6 +462,7 @@ void app_show_settings(void) {
     }
 
     char *prev_hotkey = app->config->hotkey ? strdup(app->config->hotkey) : NULL;
+    char *prev_model_path = app->config->model_path ? strdup(app->config->model_path) : NULL;
 
     settings_dialog_show(NULL, app->config);
 
@@ -425,6 +471,12 @@ void app_show_settings(void) {
         (prev_hotkey != NULL && app->config->hotkey == NULL) ||
         (prev_hotkey && app->config->hotkey && strcmp(prev_hotkey, app->config->hotkey) != 0);
     free(prev_hotkey);
+
+    const bool model_changed =
+        (prev_model_path == NULL && app->config->model_path != NULL) ||
+        (prev_model_path != NULL && app->config->model_path == NULL) ||
+        (prev_model_path && app->config->model_path && strcmp(prev_model_path, app->config->model_path) != 0);
+    free(prev_model_path);
     
     // Reload audio device if changed
     audio_capture_free(app->audio);
@@ -434,14 +486,11 @@ void app_show_settings(void) {
     // Update VAD threshold
     vad_free(app->vad);
     app->vad = vad_new_energy(app->config->vad_threshold);
-    
-    // Reload model if path changed
-    if (app->config->model_path && !transcriber_is_loaded(app->transcriber)) {
-        EngineType type = ENGINE_WHISPER;
-        if (app->config->model_id && strstr(app->config->model_id, "parakeet")) {
-            type = ENGINE_PARAKEET;
-        }
-        transcriber_load(app->transcriber, type, app->config->model_path);
+
+    // On-demand model loading: if settings changed model, unload now so next use loads the new one.
+    if (model_changed && transcriber_is_loaded(app->transcriber)) {
+        cancel_model_unload_timer(app);
+        transcriber_unload(app->transcriber);
     }
 
     // Always re-register: we paused the hotkey during settings.
@@ -479,8 +528,8 @@ static void on_model_downloaded(const char *model_id, const char *model_path, vo
     EngineType type = ENGINE_WHISPER;
     if (strstr(model_id, "parakeet")) type = ENGINE_PARAKEET;
 
+    (void)type;
+    // On-demand model loading: keep memory free until recording starts.
+    cancel_model_unload_timer(a);
     transcriber_unload(a->transcriber);
-    if (!transcriber_load(a->transcriber, type, model_path)) {
-        fprintf(stderr, "Failed to load downloaded model: %s\n", model_path);
-    }
 }
