@@ -83,6 +83,7 @@ Autostart: enable **Start Auriscribe on login** in Settings.
 - `AURISCRIBE_GPU_DEVICE=0` selects GPU device index
 - `AURISCRIBE_THREADS=8` sets Whisper CPU thread count
 - `AURISCRIBE_HF_REPO=ggerganov/whisper.cpp` overrides the Hugging Face model repo
+- `AURISCRIBE_VK_ICD_FILENAMES=/path/to/icd.json` limits Vulkan ICD probing (can reduce one-time RAM overhead)
 
 Legacy env vars (`XFCE_WHISPER_*`) are still accepted for backwards compatibility.
 

@@ -1,11 +1,13 @@
 #include "transcribe.h"
+#include <errno.h>
+#include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
-
-// whisper.cpp header
-#include "whisper.h"
 
 static const char *env_get(const char *preferred, const char *legacy) {
     const char *v = preferred ? getenv(preferred) : NULL;
@@ -31,69 +33,249 @@ static int transcriber_threads(void) {
     return n;
 }
 
+static bool read_exact(int fd, void *buf, size_t n) {
+    uint8_t *p = (uint8_t *)buf;
+    size_t off = 0;
+    while (off < n) {
+        ssize_t r = read(fd, p + off, n - off);
+        if (r == 0) return false;
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        off += (size_t)r;
+    }
+    return true;
+}
+
+static bool write_exact(int fd, const void *buf, size_t n) {
+    const uint8_t *p = (const uint8_t *)buf;
+    size_t off = 0;
+    while (off < n) {
+        ssize_t w = write(fd, p + off, n - off);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        off += (size_t)w;
+    }
+    return true;
+}
+
+static bool write_u32(int fd, uint32_t v) {
+    uint8_t b[4] = {
+        (uint8_t)(v & 0xff),
+        (uint8_t)((v >> 8) & 0xff),
+        (uint8_t)((v >> 16) & 0xff),
+        (uint8_t)((v >> 24) & 0xff),
+    };
+    return write_exact(fd, b, sizeof(b));
+}
+
+static bool read_u32(int fd, uint32_t *out) {
+    uint8_t b[4];
+    if (!read_exact(fd, b, sizeof(b))) return false;
+    *out = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+    return true;
+}
+
+static bool write_u8(int fd, uint8_t v) {
+    return write_exact(fd, &v, 1);
+}
+
+static bool read_u8(int fd, uint8_t *out) {
+    return read_exact(fd, out, 1);
+}
+
+static bool read_msg(int fd, char *type_out, char **payload_out) {
+    *payload_out = NULL;
+    char magic[4];
+    if (!read_exact(fd, magic, 4)) return false;
+    if (memcmp(magic, "AUR1", 4) != 0) return false;
+    uint8_t t = 0;
+    if (!read_u8(fd, &t)) return false;
+    uint32_t n = 0;
+    if (!read_u32(fd, &n)) return false;
+    char *s = calloc(1, (size_t)n + 1);
+    if (!s) return false;
+    if (n && !read_exact(fd, s, n)) {
+        free(s);
+        return false;
+    }
+    s[n] = '\0';
+    *type_out = (char)t;
+    *payload_out = s;
+    return true;
+}
+
+static bool send_magic_cmd(int fd, char cmd) {
+    const char magic[4] = { 'A', 'U', 'R', 'I' };
+    if (!write_exact(fd, magic, 4)) return false;
+    return write_u8(fd, (uint8_t)cmd);
+}
+
 struct Transcriber {
     EngineType type;
-    struct whisper_context *whisper_ctx;
-    // Parakeet would go here with ONNX runtime
+    pid_t worker_pid;
+    int to_worker_fd;
+    int from_worker_fd;
+    bool loaded;
 };
 
+static void transcriber_kill_worker(Transcriber *t) {
+    if (!t) return;
+    if (t->to_worker_fd != -1) close(t->to_worker_fd);
+    if (t->from_worker_fd != -1) close(t->from_worker_fd);
+    t->to_worker_fd = -1;
+    t->from_worker_fd = -1;
+
+    if (t->worker_pid > 0) {
+        // Try graceful.
+        kill(t->worker_pid, SIGTERM);
+        for (int i = 0; i < 50; i++) { // ~500ms
+            int status = 0;
+            pid_t r = waitpid(t->worker_pid, &status, WNOHANG);
+            if (r == t->worker_pid) break;
+            usleep(10000);
+        }
+        kill(t->worker_pid, SIGKILL);
+        (void)waitpid(t->worker_pid, NULL, 0);
+        t->worker_pid = 0;
+    }
+    t->loaded = false;
+    t->type = ENGINE_NONE;
+}
+
+static bool transcriber_start_worker(Transcriber *t) {
+    int to_child[2] = {-1, -1};
+    int from_child[2] = {-1, -1};
+    if (pipe(to_child) != 0) return false;
+    if (pipe(from_child) != 0) {
+        close(to_child[0]); close(to_child[1]);
+        return false;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        dup2(to_child[0], STDIN_FILENO);
+        dup2(from_child[1], STDOUT_FILENO);
+        close(to_child[0]); close(to_child[1]);
+        close(from_child[0]); close(from_child[1]);
+
+        // Dev (run from build dir) + installed (in PATH).
+        execl("./auriscribe-worker", "auriscribe-worker", NULL);
+        execlp("auriscribe-worker", "auriscribe-worker", NULL);
+        _exit(127);
+    }
+
+    if (pid < 0) {
+        close(to_child[0]); close(to_child[1]);
+        close(from_child[0]); close(from_child[1]);
+        return false;
+    }
+
+    close(to_child[0]);
+    close(from_child[1]);
+
+    t->worker_pid = pid;
+    t->to_worker_fd = to_child[1];
+    t->from_worker_fd = from_child[0];
+    return true;
+}
+
 Transcriber *transcriber_new(void) {
-    return calloc(1, sizeof(Transcriber));
+    Transcriber *t = calloc(1, sizeof(*t));
+    t->type = ENGINE_NONE;
+    t->worker_pid = 0;
+    t->to_worker_fd = -1;
+    t->from_worker_fd = -1;
+    t->loaded = false;
+    return t;
 }
 
 bool transcriber_load(Transcriber *t, EngineType type, const char *model_path) {
     transcriber_unload(t);
-    
-    if (type == ENGINE_WHISPER) {
-        fprintf(stderr, "Loading whisper model: %s\n", model_path ? model_path : "(null)");
-        struct whisper_context_params params = whisper_context_default_params();
+    if (!t || type != ENGINE_WHISPER) return false;
+    if (!model_path || !*model_path) return false;
 
-        // Prefer GPU (Vulkan/CUDA/Metal/etc.) when whisper.cpp was built with it.
-        // Set AURISCRIBE_NO_GPU=1 to force CPU.
-        if (env_get("AURISCRIBE_NO_GPU", "XFCE_WHISPER_NO_GPU")) {
-            params.use_gpu = false;
-        }
-
-        const char *gpu_device = env_get("AURISCRIBE_GPU_DEVICE", "XFCE_WHISPER_GPU_DEVICE");
-        if (gpu_device && *gpu_device) {
-            params.gpu_device = atoi(gpu_device);
-        }
-
-        t->whisper_ctx = whisper_init_from_file_with_params(model_path, params);
-        if (!t->whisper_ctx) {
-            fprintf(stderr, "Failed to load whisper model: %s\n", model_path);
-            return false;
-        }
-        t->type = ENGINE_WHISPER;
-        return true;
-    }
-    
-    if (type == ENGINE_PARAKEET) {
-        // TODO: Implement Parakeet with ONNX Runtime
-        fprintf(stderr, "Parakeet not yet implemented\n");
+    if (!transcriber_start_worker(t)) {
+        fprintf(stderr, "Failed to start auriscribe-worker\n");
+        transcriber_kill_worker(t);
         return false;
     }
-    
-    return false;
+
+    const bool no_gpu = env_get("AURISCRIBE_NO_GPU", "XFCE_WHISPER_NO_GPU") != NULL;
+    const char *gpu_device_s = env_get("AURISCRIBE_GPU_DEVICE", "XFCE_WHISPER_GPU_DEVICE");
+    uint32_t gpu_device = 0;
+    if (gpu_device_s && *gpu_device_s) gpu_device = (uint32_t)atoi(gpu_device_s);
+
+    if (!send_magic_cmd(t->to_worker_fd, 'L')) {
+        transcriber_kill_worker(t);
+        return false;
+    }
+    const uint32_t path_len = (uint32_t)strlen(model_path);
+    if (!write_u32(t->to_worker_fd, path_len) ||
+        !write_exact(t->to_worker_fd, model_path, path_len) ||
+        !write_u32(t->to_worker_fd, (uint32_t)transcriber_threads()) ||
+        !write_u32(t->to_worker_fd, gpu_device) ||
+        !write_u8(t->to_worker_fd, no_gpu ? 0 : 1)) {
+        transcriber_kill_worker(t);
+        return false;
+    }
+
+    char resp_type = 0;
+    char *payload = NULL;
+    if (!read_msg(t->from_worker_fd, &resp_type, &payload)) {
+        transcriber_kill_worker(t);
+        return false;
+    }
+    const bool ok = (resp_type == 'O');
+    if (!ok) {
+        fprintf(stderr, "Worker load failed: %s\n", payload ? payload : "");
+        free(payload);
+        transcriber_kill_worker(t);
+        return false;
+    }
+    free(payload);
+
+    t->type = ENGINE_WHISPER;
+    t->loaded = true;
+    return true;
 }
 
 void transcriber_unload(Transcriber *t) {
-    if (t->whisper_ctx) {
-        fprintf(stderr, "Unloading whisper model\n");
-        whisper_free(t->whisper_ctx);
-        t->whisper_ctx = NULL;
+    if (!t) return;
+    if (t->worker_pid <= 0) {
+        t->loaded = false;
+        t->type = ENGINE_NONE;
+        return;
     }
+
+    (void)send_magic_cmd(t->to_worker_fd, 'Q');
+    char resp_type = 0;
+    char *payload = NULL;
+    (void)read_msg(t->from_worker_fd, &resp_type, &payload);
+    free(payload);
+
+    // Close pipes; reap child.
+    if (t->to_worker_fd != -1) close(t->to_worker_fd);
+    if (t->from_worker_fd != -1) close(t->from_worker_fd);
+    t->to_worker_fd = -1;
+    t->from_worker_fd = -1;
+    (void)waitpid(t->worker_pid, NULL, 0);
+    t->worker_pid = 0;
+    t->loaded = false;
     t->type = ENGINE_NONE;
 }
 
 void transcriber_free(Transcriber *t) {
     if (!t) return;
-    transcriber_unload(t);
+    transcriber_kill_worker(t);
     free(t);
 }
 
 bool transcriber_is_loaded(Transcriber *t) {
-    return t && t->type != ENGINE_NONE;
+    return t && t->loaded && t->worker_pid > 0;
 }
 
 EngineType transcriber_get_type(Transcriber *t) {
@@ -102,60 +284,40 @@ EngineType transcriber_get_type(Transcriber *t) {
 
 char *transcriber_process(Transcriber *t, const float *samples, size_t count,
                           const char *language, bool translate) {
-    if (!t || t->type == ENGINE_NONE) return NULL;
-    
-    if (t->type == ENGINE_WHISPER) {
-        struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-        
-        params.n_threads = transcriber_threads();
-        params.print_progress = false;
-        params.print_special = false;
-        params.print_realtime = false;
-        params.print_timestamps = false;
-        params.translate = translate;
-        params.single_segment = true;
-        params.no_context = true;
-        
-        if (language && strcmp(language, "auto") != 0) {
-            params.language = language;
-            params.detect_language = false;
-        } else {
-            params.detect_language = true;
-            params.language = NULL;
-        }
-        
-        if (whisper_full(t->whisper_ctx, params, samples, (int)count) != 0) {
-            fprintf(stderr, "Whisper transcription failed\n");
-            return NULL;
-        }
-        
-        int n_segments = whisper_full_n_segments(t->whisper_ctx);
-        if (n_segments == 0) return strdup("");
-        
-        // Concatenate all segments
-        size_t total_len = 0;
-        for (int i = 0; i < n_segments; i++) {
-            const char *text = whisper_full_get_segment_text(t->whisper_ctx, i);
-            if (text) total_len += strlen(text);
-        }
-        
-        char *result = malloc(total_len + 1);
-        result[0] = '\0';
-        
-        for (int i = 0; i < n_segments; i++) {
-            const char *text = whisper_full_get_segment_text(t->whisper_ctx, i);
-            if (text) strcat(result, text);
-        }
-        
-        // Trim leading space that whisper often adds
-        char *trimmed = result;
-        while (*trimmed == ' ') trimmed++;
-        if (trimmed != result) {
-            memmove(result, trimmed, strlen(trimmed) + 1);
-        }
-        
-        return result;
+    if (!t || !transcriber_is_loaded(t)) return NULL;
+    if (t->type != ENGINE_WHISPER) return NULL;
+
+    if (!send_magic_cmd(t->to_worker_fd, 'T')) {
+        transcriber_kill_worker(t);
+        return NULL;
     }
-    
+
+    const uint32_t n_samples = (uint32_t)count;
+    const char *lang = (language && strcmp(language, "auto") != 0) ? language : "";
+    const uint32_t lang_len = (uint32_t)strlen(lang);
+
+    if (!write_u32(t->to_worker_fd, n_samples) ||
+        !write_u32(t->to_worker_fd, lang_len) ||
+        (lang_len && !write_exact(t->to_worker_fd, lang, lang_len)) ||
+        !write_u8(t->to_worker_fd, translate ? 1 : 0) ||
+        !write_u32(t->to_worker_fd, (uint32_t)transcriber_threads()) ||
+        (n_samples && !write_exact(t->to_worker_fd, samples, (size_t)n_samples * sizeof(float)))) {
+        transcriber_kill_worker(t);
+        return NULL;
+    }
+
+    char resp_type = 0;
+    char *payload = NULL;
+    if (!read_msg(t->from_worker_fd, &resp_type, &payload)) {
+        transcriber_kill_worker(t);
+        return NULL;
+    }
+
+    if (resp_type == 'R') {
+        return payload; // already allocated
+    }
+
+    fprintf(stderr, "Worker error: %s\n", payload ? payload : "");
+    free(payload);
     return NULL;
 }

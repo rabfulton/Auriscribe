@@ -8,6 +8,10 @@
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
 App *app = NULL;
 
 static void on_audio_data(const float *samples, size_t count, void *userdata);
@@ -40,6 +44,12 @@ static const char *env_get(const char *preferred, const char *legacy) {
     v = legacy ? getenv(legacy) : NULL;
     if (v && *v) return v;
     return NULL;
+}
+
+static void try_trim_heap(void) {
+#ifdef __GLIBC__
+    (void)malloc_trim(0);
+#endif
 }
 
 static unsigned long x11_get_active_window(void) {
@@ -203,6 +213,7 @@ static gboolean unload_model_timeout_cb(gpointer data) {
     fprintf(stderr, "Idle timeout reached; unloading model to free memory\n");
     transcriber_unload(a->transcriber);
     a->model_unload_timeout_id = 0;
+    try_trim_heap();
     return G_SOURCE_REMOVE;
 }
 
@@ -463,6 +474,9 @@ static gboolean finalize_paste_idle(gpointer data) {
         app->rec_capacity = SAMPLE_RATE * 10;
         app->rec_buffer = malloc(app->rec_capacity * sizeof(float));
     }
+
+    // Encourage RSS to drop after large transient allocations (audio buffers, model load/unload).
+    try_trim_heap();
 
     free(fp);
     return G_SOURCE_REMOVE;

@@ -71,6 +71,7 @@ make install DESTDIR=%{buildroot} PREFIX=/usr
 %files
 %license LICENSE
 /usr/bin/auriscribe
+/usr/bin/auriscribe-worker
 /usr/share/applications/auriscribe.desktop
 /usr/share/icons/hicolor/scalable/apps/auriscribe.svg
 
