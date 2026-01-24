@@ -2,9 +2,12 @@
 
 Lightweight, offline speech-to-text for Linux desktops (tray app). Built on whisper.cpp.
 
+![Auriscribe screenshot](screenshots/screenshot.png)
+
 - Native application with no web tech or python
 - Low memory usage, completely unloads the Whisper model when idle
 - Vulkan backend by default for acceleration without pulling in lots of dependencies
+- Optional voice activity animation that can be centered on the screen or over the window recieving input
 
 ## Install
 

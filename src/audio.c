@@ -16,10 +16,14 @@ struct AudioCapture {
     volatile bool running;
 };
 
+// 40ms frames at 16kHz. The app layer aggregates into 30ms frames for VAD.
+// (Overlay uses per-callback level updates.)
+#define AUDIO_FRAME_SAMPLES 640
+
 static void *capture_thread(void *arg) {
     AudioCapture *ac = arg;
-    int16_t buf[SAMPLE_RATE / 10];  // 100ms buffer
-    float fbuf[SAMPLE_RATE / 10];
+    int16_t buf[AUDIO_FRAME_SAMPLES];
+    float fbuf[AUDIO_FRAME_SAMPLES];
     int err;
 
     while (ac->running) {
@@ -63,8 +67,17 @@ bool audio_capture_start(AudioCapture *ac) {
     };
 
     int err;
+    pa_buffer_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.maxlength = (uint32_t)-1;
+    attr.tlength   = (uint32_t)-1;
+    attr.prebuf    = (uint32_t)-1;
+    attr.minreq    = (uint32_t)-1;
+    // Hint to the server that we want small, low-latency capture chunks.
+    attr.fragsize  = (uint32_t)(AUDIO_FRAME_SAMPLES * sizeof(int16_t));
+
     ac->pa = pa_simple_new(NULL, "auriscribe", PA_STREAM_RECORD,
-                           ac->device, "Speech Input", &ss, NULL, NULL, &err);
+                           ac->device, "Speech Input", &ss, NULL, &attr, &err);
 
     if (!ac->pa) {
         fprintf(stderr, "PulseAudio connection failed: %s\n", pa_strerror(err));

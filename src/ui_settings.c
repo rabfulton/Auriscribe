@@ -20,6 +20,8 @@ typedef struct {
     GtkWidget *ptt_check;
     GtkWidget *translate_check;
     GtkWidget *autostart_check;
+    GtkWidget *overlay_check;
+    GtkWidget *overlay_pos_combo;
     GtkWidget *model_path_entry;
     bool capturing_hotkey;
 } SettingsDialog;
@@ -192,6 +194,12 @@ static void settings_apply(SettingsDialog *sd) {
     sd->cfg->translate_to_english = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sd->translate_check));
     sd->cfg->autostart = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sd->autostart_check));
 
+    // Save overlay
+    sd->cfg->overlay_enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sd->overlay_check));
+    free(sd->cfg->overlay_position);
+    const char *pos = gtk_combo_box_get_active_id(GTK_COMBO_BOX(sd->overlay_pos_combo));
+    sd->cfg->overlay_position = strdup(pos ? pos : "screen");
+
     // Save model path
     free(sd->cfg->model_path);
     const char *path = gtk_entry_get_text(GTK_ENTRY(sd->model_path_entry));
@@ -347,6 +355,18 @@ void settings_dialog_show(GtkWindow *parent, Config *cfg) {
     sd->autostart_check = gtk_check_button_new_with_label("Start Auriscribe on login");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sd->autostart_check), cfg->autostart);
     gtk_grid_attach(GTK_GRID(grid), sd->autostart_check, 0, row++, 2, 1);
+
+    // Recording overlay
+    sd->overlay_check = gtk_check_button_new_with_label("Show recording overlay");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sd->overlay_check), cfg->overlay_enabled);
+    gtk_grid_attach(GTK_GRID(grid), sd->overlay_check, 0, row++, 2, 1);
+
+    gtk_grid_attach(GTK_GRID(grid), create_label("Overlay position:"), 0, row, 1, 1);
+    sd->overlay_pos_combo = gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sd->overlay_pos_combo), "screen", "Screen center");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sd->overlay_pos_combo), "target", "Target window center (X11)");
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(sd->overlay_pos_combo), cfg->overlay_position ? cfg->overlay_position : "screen");
+    gtk_grid_attach(GTK_GRID(grid), sd->overlay_pos_combo, 1, row++, 1, 1);
     
     g_signal_connect(sd->hotkey_entry, "changed", G_CALLBACK(on_hotkey_entry_changed), sd);
     g_signal_connect(sd->dialog, "key-press-event", G_CALLBACK(on_dialog_key_press), sd);

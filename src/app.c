@@ -1,9 +1,11 @@
 #include "app.h"
+#include "overlay.h"
 #include "paste.h"
 #include "ui_settings.h"
 #include "ui_download.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <fcntl.h>
 #include <sys/types.h>
@@ -55,6 +57,17 @@ static void try_trim_heap(void) {
 #ifdef __GLIBC__
     (void)malloc_trim(0);
 #endif
+}
+
+static void dbg_chunk(App *a, const char *fmt, ...) {
+    if (!a || !a->debug_chunking) return;
+    va_list ap;
+    va_start(ap, fmt);
+    const gint64 now_us = g_get_monotonic_time();
+    fprintf(stderr, "[chunk %lldms] ", (long long)(now_us / 1000));
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
 }
 
 static unsigned long x11_get_active_window(void) {
@@ -165,6 +178,12 @@ void app_init(GtkApplication *gtk_app) {
     g_mutex_init(&app->accum_mutex);
     app->accum_text = g_string_new("");
     app->stop_requested = false;
+    app->debug_chunking = env_get("AURISCRIBE_DEBUG_CHUNKING", "XFCE_WHISPER_DEBUG_CHUNKING") != NULL;
+    app->debug_last_vad_speech = false;
+    app->debug_audio_cb_count = 0;
+    app->debug_overlay_latency = env_get("AURISCRIBE_DEBUG_OVERLAY_LATENCY", "XFCE_WHISPER_DEBUG_OVERLAY_LATENCY") != NULL;
+    app->debug_prev_overlay_lvl = 0.0f;
+    atomic_store(&app->overlay_level_us, 0);
     
     // Initialize VAD
     app->vad = vad_new_energy(app->config->vad_threshold);
@@ -202,6 +221,7 @@ void app_cleanup(void) {
     app->shutting_down = true;
 
     cancel_model_unload_timer(app);
+    overlay_hide(app);
 
     if (app->chunk_queue) {
         g_async_queue_push(app->chunk_queue, CHUNK_QUEUE_SENTINEL); // sentinel to stop worker
@@ -262,6 +282,30 @@ static gboolean unload_model_timeout_cb(gpointer data) {
 static void on_audio_data(const float *samples, size_t count, void *userdata) {
     App *a = userdata;
     if (a->state != STATE_RECORDING) return;
+    a->debug_audio_cb_count++;
+
+    if (a->config && a->config->overlay_enabled) {
+        float peak = 0.0f;
+        for (size_t i = 0; i < count; i++) {
+            float v = samples[i];
+            if (v < 0) v = -v;
+            if (v > peak) peak = v;
+        }
+        // Slight boost for better visual feedback on quiet mics.
+        float lvl = peak * 4.0f;
+        if (lvl > 1.0f) lvl = 1.0f;
+        overlay_set_level(a, lvl);
+
+        if (a->debug_overlay_latency) {
+            const float thr = 0.08f;
+            if ((a->debug_prev_overlay_lvl < thr && lvl >= thr) || (a->debug_audio_cb_count % 200) == 0) {
+                const gint64 now_us = g_get_monotonic_time();
+                fprintf(stderr, "[overlay-lat] audio lvl=%.3f count=%zu t=%lldms\n",
+                        lvl, count, (long long)(now_us / 1000));
+            }
+            a->debug_prev_overlay_lvl = lvl;
+        }
+    }
     
     if (env_get("AURISCRIBE_DEBUG_AUDIO", "XFCE_WHISPER_DEBUG_AUDIO")) {
         float max = 0;
@@ -276,33 +320,65 @@ static void on_audio_data(const float *samples, size_t count, void *userdata) {
         }
     }
     
-    VADResult vr = vad_process(a->vad, samples, count);
-    
-    if (vr.samples && vr.count > 0) {
-        // Append to recording buffer
-        if (ensure_rec_capacity(a, vr.count)) {
-            memcpy(a->rec_buffer + a->rec_count, vr.samples, vr.count * sizeof(float));
-            a->rec_count += vr.count;
-        } else {
-            fprintf(stderr, "Out of memory while recording (dropping audio)\n");
+    // Aggregate input into 30ms frames (480 samples) for the VAD.
+    const float *p = samples;
+    size_t n = count;
+    while (n > 0) {
+        const size_t space = 480 - a->vad_accum_count;
+        const size_t take = n < space ? n : space;
+        memcpy(a->vad_accum + a->vad_accum_count, p, take * sizeof(float));
+        a->vad_accum_count += take;
+        p += take;
+        n -= take;
+
+        if (a->vad_accum_count < 480) break;
+
+        VADResult vr = vad_process(a->vad, a->vad_accum, 480);
+        a->vad_accum_count = 0;
+
+        if (a->debug_chunking) {
+            const bool state_change = (vr.is_speech != a->debug_last_vad_speech) || vr.speech_ended;
+            const bool periodic = vr.is_speech && ((a->debug_audio_cb_count % 10) == 0); // throttle
+            if (state_change || periodic) {
+                dbg_chunk(a,
+                          "audio_cb=%llu vad_frame=%zums vad_is_speech=%d vad_speech_ended=%d vr.count=%zu rec_count=%zu",
+                          (unsigned long long)a->debug_audio_cb_count,
+                          (size_t)(1000 * 480 / SAMPLE_RATE),
+                          (int)vr.is_speech,
+                          (int)vr.speech_ended,
+                          vr.count,
+                          a->rec_count);
+            }
+            a->debug_last_vad_speech = vr.is_speech;
         }
-        free(vr.samples);
-    }
 
-    // If we just transitioned from speech to silence, enqueue the chunk for transcription.
-    if (vr.speech_ended) {
-        if (a->rec_count > 0) {
-            pad_recording_tail(a);
-            AudioChunk *chunk = calloc(1, sizeof(*chunk));
-            chunk->samples = a->rec_buffer;
-            chunk->count = a->rec_count;
-            chunk->flush = false;
+        if (vr.samples && vr.count > 0) {
+            // Append to recording buffer
+            if (ensure_rec_capacity(a, vr.count)) {
+                memcpy(a->rec_buffer + a->rec_count, vr.samples, vr.count * sizeof(float));
+                a->rec_count += vr.count;
+            } else {
+                fprintf(stderr, "Out of memory while recording (dropping audio)\n");
+            }
+            free(vr.samples);
+        }
 
-            a->rec_buffer = NULL;
-            a->rec_count = 0;
-            a->rec_capacity = 0;
+        // If we just transitioned from speech to silence, enqueue the chunk for transcription.
+        if (vr.speech_ended) {
+            if (a->rec_count > 0) {
+                pad_recording_tail(a);
+                AudioChunk *chunk = calloc(1, sizeof(*chunk));
+                chunk->samples = a->rec_buffer;
+                chunk->count = a->rec_count;
+                chunk->flush = false;
 
-            g_async_queue_push(a->chunk_queue, chunk);
+                a->rec_buffer = NULL;
+                a->rec_count = 0;
+                a->rec_capacity = 0;
+
+                g_async_queue_push(a->chunk_queue, chunk);
+                dbg_chunk(a, "enqueued chunk: samples=%zu secs=%.2f", chunk->count, (double)chunk->count / (double)SAMPLE_RATE);
+            }
         }
     }
 }
@@ -358,28 +434,29 @@ void app_start_recording(void) {
     printf("app_start_recording: checking model...\n");
     fflush(stdout);
     
-    if (!transcriber_is_loaded(app->transcriber)) {
-        if (!app->config->model_path || !*app->config->model_path) {
-            fprintf(stderr, "No model selected (open Settings to choose/download a model)\n");
-            return;
-        }
-
-        EngineType type = ENGINE_WHISPER;
-        if (app->config->model_id && strstr(app->config->model_id, "parakeet")) {
-            type = ENGINE_PARAKEET;
-        }
-
-        if (!transcriber_load(app->transcriber, type, app->config->model_path)) {
-            fprintf(stderr, "Failed to load model: %s\n", app->config->model_path);
-            return;
-        }
+    if (!app->config->model_path || !*app->config->model_path) {
+        fprintf(stderr, "No model selected (open Settings to choose/download a model)\n");
+        return;
     }
+
+    EngineType type = ENGINE_WHISPER;
+    if (app->config->model_id && strstr(app->config->model_id, "parakeet")) {
+        type = ENGINE_PARAKEET;
+    }
+        if (!transcriber_is_loaded(app->transcriber) && !transcriber_is_loading(app->transcriber)) {
+            if (!transcriber_load_async(app->transcriber, type, app->config->model_path)) {
+                fprintf(stderr, "Failed to start model load: %s\n", app->config->model_path);
+                return;
+            }
+        }
     
-    printf("app_start_recording: model OK, starting audio...\n");
+    printf("app_start_recording: starting audio (model loads in background)...\n");
     fflush(stdout);
     
     app->rec_count = 0;
+    app->vad_accum_count = 0;
     vad_reset(app->vad);
+    overlay_set_level(app, 0.0f);
 
     // Capture target window early so we can paste back into it later (X11 only).
     app->target_x11_window = x11_get_active_window();
@@ -404,6 +481,7 @@ void app_start_recording(void) {
     }
     
     app->state = STATE_RECORDING;
+    overlay_show(app);
     tray_set_recording(true);
     printf("Recording started\n");
     fflush(stdout);
@@ -420,6 +498,7 @@ void app_stop_recording(void) {
     audio_capture_stop(app->audio);
     app->state = STATE_PROCESSING;
     tray_set_recording(false);
+    overlay_hide(app);
     
     printf("Recording stopped\n");
     
@@ -459,12 +538,37 @@ static gpointer worker_thread_main(gpointer data) {
             FinalizePaste *fp = calloc(1, sizeof(*fp));
             fp->target_window = a->target_x11_window;
             g_idle_add(finalize_paste_idle, fp);
+            dbg_chunk(a, "worker: flush received");
             continue;
         }
 
         if (chunk->samples && chunk->count > 0) {
+            // whisper.cpp refuses very short inputs; pad trailing silence to a safe minimum.
+            // (Some internal framing can effectively drop ~10ms, so use 1010ms, not 1000ms.)
+            const size_t min_samples = (size_t)SAMPLE_RATE + 160;
+            if (chunk->count < min_samples) {
+                const size_t prev = chunk->count;
+                float *padded = realloc(chunk->samples, min_samples * sizeof(float));
+                if (!padded) {
+                    dbg_chunk(a, "worker: OOM padding short chunk (samples=%zu), dropping", chunk->count);
+                    free(chunk->samples);
+                    free(chunk);
+                    continue;
+                }
+                memset(padded + prev, 0, (min_samples - prev) * sizeof(float));
+                chunk->samples = padded;
+                chunk->count = min_samples;
+                dbg_chunk(a, "worker: padded short chunk %zu -> %zu samples", prev, chunk->count);
+            }
+
+            const gint64 t0_us = g_get_monotonic_time();
+            dbg_chunk(a, "worker: processing chunk samples=%zu secs=%.2f", chunk->count, (double)chunk->count / (double)SAMPLE_RATE);
             char *text = transcriber_process(a->transcriber, chunk->samples, chunk->count,
                                              a->config->language, a->config->translate_to_english);
+            const gint64 t1_us = g_get_monotonic_time();
+            dbg_chunk(a, "worker: transcribe done in %.2fs (text_len=%zu)",
+                      (double)(t1_us - t0_us) / 1000000.0,
+                      text ? strlen(text) : 0);
             if (text && *text) {
                 g_mutex_lock(&a->accum_mutex);
                 if (a->accum_text->len > 0) g_string_append_c(a->accum_text, ' ');
@@ -547,6 +651,8 @@ void app_show_settings(void) {
 
     char *prev_hotkey = app->config->hotkey ? strdup(app->config->hotkey) : NULL;
     char *prev_model_path = app->config->model_path ? strdup(app->config->model_path) : NULL;
+    const bool prev_overlay_enabled = app->config->overlay_enabled;
+    char *prev_overlay_pos = app->config->overlay_position ? strdup(app->config->overlay_position) : NULL;
 
     settings_dialog_show(NULL, app->config);
 
@@ -561,6 +667,13 @@ void app_show_settings(void) {
         (prev_model_path != NULL && app->config->model_path == NULL) ||
         (prev_model_path && app->config->model_path && strcmp(prev_model_path, app->config->model_path) != 0);
     free(prev_model_path);
+
+    const bool overlay_changed =
+        (prev_overlay_enabled != app->config->overlay_enabled) ||
+        (prev_overlay_pos == NULL && app->config->overlay_position != NULL) ||
+        (prev_overlay_pos != NULL && app->config->overlay_position == NULL) ||
+        (prev_overlay_pos && app->config->overlay_position && strcmp(prev_overlay_pos, app->config->overlay_position) != 0);
+    free(prev_overlay_pos);
     
     // Reload audio device if changed
     audio_capture_free(app->audio);
@@ -575,6 +688,14 @@ void app_show_settings(void) {
     if (model_changed && transcriber_is_loaded(app->transcriber)) {
         cancel_model_unload_timer(app);
         transcriber_unload(app->transcriber);
+    }
+
+    if (overlay_changed && app->state == STATE_RECORDING) {
+        if (app->config->overlay_enabled) {
+            overlay_show(app);
+        } else {
+            overlay_hide(app);
+        }
     }
 
     // Always re-register: we paused the hotkey during settings.

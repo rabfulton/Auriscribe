@@ -14,6 +14,8 @@ typedef struct {
     bool translate_to_english;
     float vad_threshold;
     bool autostart;
+    bool overlay_enabled;
+    char *overlay_position; // "screen" or "target"
 } Config;
 
 // Get XDG paths

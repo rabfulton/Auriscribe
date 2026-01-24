@@ -120,6 +120,8 @@ struct Transcriber {
     int to_worker_fd;
     int from_worker_fd;
     bool loaded;
+    bool loading;
+    bool load_failed;
 };
 
 static void transcriber_kill_worker(Transcriber *t) {
@@ -143,6 +145,8 @@ static void transcriber_kill_worker(Transcriber *t) {
         t->worker_pid = 0;
     }
     t->loaded = false;
+    t->loading = false;
+    t->load_failed = false;
     t->type = ENGINE_NONE;
 }
 
@@ -190,6 +194,8 @@ Transcriber *transcriber_new(void) {
     t->to_worker_fd = -1;
     t->from_worker_fd = -1;
     t->loaded = false;
+    t->loading = false;
+    t->load_failed = false;
     return t;
 }
 
@@ -243,10 +249,50 @@ bool transcriber_load(Transcriber *t, EngineType type, const char *model_path) {
     return true;
 }
 
+bool transcriber_load_async(Transcriber *t, EngineType type, const char *model_path) {
+    transcriber_unload(t);
+    if (!t || type != ENGINE_WHISPER) return false;
+    if (!model_path || !*model_path) return false;
+
+    if (!transcriber_start_worker(t)) {
+        fprintf(stderr, "Failed to start auriscribe-worker\n");
+        transcriber_kill_worker(t);
+        return false;
+    }
+
+    const bool no_gpu = env_get("AURISCRIBE_NO_GPU", "XFCE_WHISPER_NO_GPU") != NULL;
+    const char *gpu_device_s = env_get("AURISCRIBE_GPU_DEVICE", "XFCE_WHISPER_GPU_DEVICE");
+    uint32_t gpu_device = 0;
+    if (gpu_device_s && *gpu_device_s) gpu_device = (uint32_t)atoi(gpu_device_s);
+
+    if (!send_magic_cmd(t->to_worker_fd, 'L')) {
+        transcriber_kill_worker(t);
+        return false;
+    }
+    const uint32_t path_len = (uint32_t)strlen(model_path);
+    if (!write_u32(t->to_worker_fd, path_len) ||
+        !write_exact(t->to_worker_fd, model_path, path_len) ||
+        !write_u32(t->to_worker_fd, (uint32_t)transcriber_threads()) ||
+        !write_u32(t->to_worker_fd, gpu_device) ||
+        !write_u8(t->to_worker_fd, no_gpu ? 0 : 1)) {
+        transcriber_kill_worker(t);
+        return false;
+    }
+
+    t->type = ENGINE_WHISPER;
+    t->loaded = false;
+    t->loading = true;
+    t->load_failed = false;
+    return true;
+}
+
 void transcriber_unload(Transcriber *t) {
     if (!t) return;
+
     if (t->worker_pid <= 0) {
         t->loaded = false;
+        t->loading = false;
+        t->load_failed = false;
         t->type = ENGINE_NONE;
         return;
     }
@@ -265,6 +311,8 @@ void transcriber_unload(Transcriber *t) {
     (void)waitpid(t->worker_pid, NULL, 0);
     t->worker_pid = 0;
     t->loaded = false;
+    t->loading = false;
+    t->load_failed = false;
     t->type = ENGINE_NONE;
 }
 
@@ -278,13 +326,43 @@ bool transcriber_is_loaded(Transcriber *t) {
     return t && t->loaded && t->worker_pid > 0;
 }
 
+bool transcriber_is_loading(Transcriber *t) {
+    return t && t->loading;
+}
+
 EngineType transcriber_get_type(Transcriber *t) {
     return t ? t->type : ENGINE_NONE;
 }
 
 char *transcriber_process(Transcriber *t, const float *samples, size_t count,
                           const char *language, bool translate) {
-    if (!t || !transcriber_is_loaded(t)) return NULL;
+    if (!t) return NULL;
+
+    if (t->loading && !t->loaded) {
+        char resp_type = 0;
+        char *payload = NULL;
+        if (!read_msg(t->from_worker_fd, &resp_type, &payload)) {
+            free(payload);
+            t->loading = false;
+            t->load_failed = true;
+            transcriber_kill_worker(t);
+            return NULL;
+        }
+        const bool ok = (resp_type == 'O');
+        if (!ok) {
+            fprintf(stderr, "Worker load failed: %s\n", payload ? payload : "");
+        }
+        free(payload);
+        t->loading = false;
+        t->loaded = ok;
+        t->load_failed = !ok;
+        if (!ok) {
+            transcriber_kill_worker(t);
+            return NULL;
+        }
+    }
+
+    if (!transcriber_is_loaded(t)) return NULL;
     if (t->type != ENGINE_WHISPER) return NULL;
 
     if (!send_magic_cmd(t->to_worker_fd, 'T')) {

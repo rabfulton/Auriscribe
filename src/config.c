@@ -79,6 +79,8 @@ Config *config_new_default(void) {
     cfg->translate_to_english = false;
     cfg->vad_threshold = 0.02f;
     cfg->autostart = false;
+    cfg->overlay_enabled = false;
+    cfg->overlay_position = strdup("screen");
     return cfg;
 }
 
@@ -90,6 +92,7 @@ void config_free(Config *cfg) {
     free(cfg->language);
     free(cfg->paste_method);
     free(cfg->microphone);
+    free(cfg->overlay_position);
     free(cfg);
 }
 
@@ -137,6 +140,10 @@ Config *config_load(void) {
         cfg->vad_threshold = (float)json_object_get_double(val);
     if (json_object_object_get_ex(root, "autostart", &val))
         cfg->autostart = json_object_get_boolean(val);
+    if (json_object_object_get_ex(root, "overlay_enabled", &val))
+        cfg->overlay_enabled = json_object_get_boolean(val);
+    if (json_object_object_get_ex(root, "overlay_position", &val))
+        cfg->overlay_position = strdup_safe(json_object_get_string(val));
 
     json_object_put(root);
 
@@ -146,6 +153,7 @@ Config *config_load(void) {
     if (!cfg->language) cfg->language = strdup("en");
     if (!cfg->paste_method) cfg->paste_method = strdup("auto");
     if (cfg->vad_threshold == 0) cfg->vad_threshold = 0.02f;
+    if (!cfg->overlay_position) cfg->overlay_position = strdup("screen");
 
     return cfg;
 }
@@ -165,6 +173,8 @@ void config_save(const Config *cfg) {
     json_object_object_add(root, "translate_to_english", json_object_new_boolean(cfg->translate_to_english));
     json_object_object_add(root, "vad_threshold", json_object_new_double(cfg->vad_threshold));
     json_object_object_add(root, "autostart", json_object_new_boolean(cfg->autostart));
+    json_object_object_add(root, "overlay_enabled", json_object_new_boolean(cfg->overlay_enabled));
+    json_object_object_add(root, "overlay_position", json_object_new_string(cfg->overlay_position ? cfg->overlay_position : "screen"));
 
     char path[600];
     snprintf(path, sizeof(path), "%s/settings.json", config_get_dir());

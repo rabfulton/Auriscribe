@@ -7,6 +7,7 @@
 #include "vad.h"
 #include "transcribe.h"
 #include "hotkey.h"
+#include <stdatomic.h>
 
 typedef enum {
     STATE_IDLE,
@@ -14,7 +15,7 @@ typedef enum {
     STATE_PROCESSING
 } AppState;
 
-typedef struct {
+typedef struct App {
     GtkApplication *gtk_app;
     Config *config;
     
@@ -40,6 +41,8 @@ typedef struct {
     size_t rec_count;
     size_t rec_capacity;
     unsigned long target_x11_window;
+    float vad_accum[480];
+    size_t vad_accum_count;
 
     // Chunking + background transcription
     GAsyncQueue *chunk_queue;
@@ -52,6 +55,25 @@ typedef struct {
     GtkWidget *tray_menu;
     GtkWidget *status_item;
     GtkWidget *hotkey_item;
+
+    // Debug
+    bool debug_chunking;
+    bool debug_last_vad_speech;
+    uint64_t debug_audio_cb_count;
+    bool debug_overlay_latency;
+    float debug_prev_overlay_lvl;
+
+    // Recording overlay (optional)
+    GtkWidget *overlay_window;
+    GtkWidget *overlay_area;
+    guint overlay_tick_id;
+    gint overlay_level_i; // atomic 0..1000
+    atomic_long overlay_level_us; // last time overlay_level_i updated (monotonic us)
+    double overlay_level_smooth;
+    double overlay_phase;
+    gint64 overlay_last_pos_us;
+    int overlay_w;
+    int overlay_h;
 } App;
 
 extern App *app;
