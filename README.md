@@ -18,6 +18,10 @@ make
 ./auriscribe
 ```
 
+## Arch Linux (AUR)
+
+- Package: `https://aur.archlinux.org/packages/auriscribe`
+
 ## Download a Model
 
 Use the tray menu: **Download Models...** → choose a model → **Download**.
