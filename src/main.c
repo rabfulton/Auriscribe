@@ -7,6 +7,11 @@
 static AppIndicator *indicator;
 static gboolean activated_once = FALSE;
 
+void tray_set_recording(bool recording) {
+    (void)recording;
+    // Keep a single, static tray icon (recording is indicated elsewhere by the desktop).
+}
+
 static void on_toggle_recording(GtkMenuItem *item, gpointer data) {
     (void)item; (void)data;
     app_toggle_recording();
@@ -92,7 +97,8 @@ static void on_activate(GtkApplication *gtk_app, gpointer data) {
     app_init(gtk_app);
     
     // Create tray indicator
-    indicator = app_indicator_new("auriscribe", "audio-input-microphone",
+    // Use the symbolic microphone icon (usually white in dark themes).
+    indicator = app_indicator_new("auriscribe", "audio-input-microphone-symbolic",
                                   APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
     
     app_indicator_set_status(indicator, APP_INDICATOR_STATUS_ACTIVE);

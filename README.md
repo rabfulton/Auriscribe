@@ -2,6 +2,10 @@
 
 Lightweight, offline speech-to-text for Linux desktops (tray app). Built on whisper.cpp.
 
+- Native application with no web tech or python
+- Low memory usage, completely unloads the Whisper model when idle
+- Vulkan backend by default for acceleration without pulling in lots of dependencies
+
 ## Install
 
 ### Debian/Ubuntu (.deb)

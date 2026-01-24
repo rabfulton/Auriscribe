@@ -66,4 +66,7 @@ void app_stop_recording(void);
 void app_show_settings(void);
 void app_show_download(void);
 
+// Tray icon state (implemented in src/main.c)
+void tray_set_recording(bool recording);
+
 #endif

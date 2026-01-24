@@ -404,6 +404,7 @@ void app_start_recording(void) {
     }
     
     app->state = STATE_RECORDING;
+    tray_set_recording(true);
     printf("Recording started\n");
     fflush(stdout);
     
@@ -418,6 +419,7 @@ void app_stop_recording(void) {
     
     audio_capture_stop(app->audio);
     app->state = STATE_PROCESSING;
+    tray_set_recording(false);
     
     printf("Recording stopped\n");
     
@@ -503,6 +505,7 @@ static gboolean finalize_paste_idle(gpointer data) {
     free(final_text);
 
     app->state = STATE_IDLE;
+    tray_set_recording(false);
     if (app->status_item) {
         gtk_menu_item_set_label(GTK_MENU_ITEM(app->status_item), "Ready");
     }
