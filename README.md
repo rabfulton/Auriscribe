@@ -1,6 +1,6 @@
 # Auriscribe
 
-Lightweight, offline speech-to-text for Linux desktops (tray app). Built on whisper.cpp.
+A lightweight, offline speech-to-text for Linux desktop use, built using whisper.cpp.
 
 ![Auriscribe screenshot](screenshots/screenshot.png)
 
@@ -95,6 +95,8 @@ Autostart: enable **Start Auriscribe on login** in Settings.
 
 Legacy env vars (`XFCE_WHISPER_*`) are still accepted for backwards compatibility.
 
-## License
+## Other Useful Projects
 
-MIT
+- Try my AI panel plugin for XFCE, [XFCE Ask](https://github.com/rabfulton/xfce-ask)
+- For many more features try out [ChatGTK](https://github.com/rabfulton/ChatGTK)
+
