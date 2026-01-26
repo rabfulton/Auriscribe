@@ -42,14 +42,11 @@ cd auriscribe
 makepkg -si
 ```
 
-## Quick Start
+## Building instructions
 
 ```bash
-# Install dependencies
+# Install build dependencies (Debian/Ubuntu helper)
 make deps
-
-# Setup whisper.cpp (auto-enables Vulkan if available)
-./scripts/setup-whisper.sh
 
 # Build
 make
@@ -57,6 +54,8 @@ make
 # Run
 ./auriscribe
 ```
+
+`make` builds the vendored `libs/whisper.cpp` automatically (Vulkan-enabled when available). `./scripts/setup-whisper.sh` is optional and only needed if you want to rebuild `libs/whisper.cpp` by itself.
 
 ## Download a Model
 
