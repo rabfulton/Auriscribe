@@ -24,6 +24,7 @@ typedef struct {
     GtkWidget *overlay_pos_combo;
     GtkWidget *paste_each_chunk_check;
     GtkWidget *chunk_output_combo;
+    GtkWidget *initial_prompt_entry;
     GtkWidget *model_path_entry;
     bool capturing_hotkey;
 } SettingsDialog;
@@ -207,6 +208,10 @@ static void settings_apply(SettingsDialog *sd) {
     const char *out = gtk_combo_box_get_active_id(GTK_COMBO_BOX(sd->chunk_output_combo));
     sd->cfg->chunk_output = strdup(out ? out : "target");
 
+    free(sd->cfg->initial_prompt);
+    const char *prompt = gtk_entry_get_text(GTK_ENTRY(sd->initial_prompt_entry));
+    sd->cfg->initial_prompt = (prompt && *prompt) ? strdup(prompt) : NULL;
+
     // Save model path
     free(sd->cfg->model_path);
     const char *path = gtk_entry_get_text(GTK_ENTRY(sd->model_path_entry));
@@ -386,6 +391,13 @@ void settings_dialog_show(GtkWindow *parent, Config *cfg) {
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sd->chunk_output_combo), "both", "Both");
     gtk_combo_box_set_active_id(GTK_COMBO_BOX(sd->chunk_output_combo), cfg->chunk_output ? cfg->chunk_output : "target");
     gtk_grid_attach(GTK_GRID(grid), sd->chunk_output_combo, 1, row++, 1, 1);
+
+    gtk_grid_attach(GTK_GRID(grid), create_label("Initial prompt (optional):"), 0, row, 1, 1);
+    sd->initial_prompt_entry = gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(sd->initial_prompt_entry), 244);
+    gtk_entry_set_text(GTK_ENTRY(sd->initial_prompt_entry), cfg->initial_prompt ? cfg->initial_prompt : "");
+    gtk_widget_set_hexpand(sd->initial_prompt_entry, TRUE);
+    gtk_grid_attach(GTK_GRID(grid), sd->initial_prompt_entry, 1, row++, 1, 1);
     
     g_signal_connect(sd->hotkey_entry, "changed", G_CALLBACK(on_hotkey_entry_changed), sd);
     g_signal_connect(sd->dialog, "key-press-event", G_CALLBACK(on_dialog_key_press), sd);

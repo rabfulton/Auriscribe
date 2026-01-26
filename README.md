@@ -95,8 +95,16 @@ Autostart: enable **Start Auriscribe on login** in Settings.
 
 Legacy env vars (`XFCE_WHISPER_*`) are still accepted for backwards compatibility.
 
+## Whisper initial prompt
+
+In **Settings...** you can optionally set an **Initial prompt** (max 244 chars). This is passed to Whisper as an “initial prompt” to bias decoding (useful for names/jargon and consistent formatting).
+
+Examples:
+- Vocabulary / proper nouns: `Auriscribe, whisper.cpp, Vulkan, GGML, PipeWire, PulseAudio`
+- Formatting: `Use proper punctuation. Use sentence case. Prefer numerals for numbers.`
+- Domain bias: `Meeting notes. Action items. Technical discussion about Linux and GPUs.`
+
 ## Other Useful Projects
 
 - Try my AI panel plugin for XFCE, [XFCE Ask](https://github.com/rabfulton/xfce-ask)
 - For many more features try out [ChatGTK](https://github.com/rabfulton/ChatGTK)
-

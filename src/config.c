@@ -83,6 +83,7 @@ Config *config_new_default(void) {
     cfg->overlay_position = strdup("screen");
     cfg->paste_each_chunk = false;
     cfg->chunk_output = strdup("target");
+    cfg->initial_prompt = NULL;
     return cfg;
 }
 
@@ -96,6 +97,7 @@ void config_free(Config *cfg) {
     free(cfg->microphone);
     free(cfg->overlay_position);
     free(cfg->chunk_output);
+    free(cfg->initial_prompt);
     free(cfg);
 }
 
@@ -151,6 +153,8 @@ Config *config_load(void) {
         cfg->paste_each_chunk = json_object_get_boolean(val);
     if (json_object_object_get_ex(root, "chunk_output", &val))
         cfg->chunk_output = strdup_safe(json_object_get_string(val));
+    if (json_object_object_get_ex(root, "initial_prompt", &val))
+        cfg->initial_prompt = strdup_safe(json_object_get_string(val));
 
     json_object_put(root);
 
@@ -185,6 +189,9 @@ void config_save(const Config *cfg) {
     json_object_object_add(root, "overlay_position", json_object_new_string(cfg->overlay_position ? cfg->overlay_position : "screen"));
     json_object_object_add(root, "paste_each_chunk", json_object_new_boolean(cfg->paste_each_chunk));
     json_object_object_add(root, "chunk_output", json_object_new_string(cfg->chunk_output ? cfg->chunk_output : "target"));
+    if (cfg->initial_prompt && *cfg->initial_prompt) {
+        json_object_object_add(root, "initial_prompt", json_object_new_string(cfg->initial_prompt));
+    }
 
     char path[600];
     snprintf(path, sizeof(path), "%s/settings.json", config_get_dir());

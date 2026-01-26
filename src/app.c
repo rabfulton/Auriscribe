@@ -584,8 +584,13 @@ static gpointer worker_thread_main(gpointer data) {
             const gint64 t0_us = g_get_monotonic_time();
             dbg_chunk(a, "worker: processing chunk samples=%zu secs=%.2f", chunk->count, (double)chunk->count / (double)SAMPLE_RATE);
             char *err = NULL;
+            char *prompt_copy = NULL;
+            if (a->config && a->config->initial_prompt && *a->config->initial_prompt) {
+                prompt_copy = strdup(a->config->initial_prompt);
+            }
             char *text = transcriber_process_ex(a->transcriber, chunk->samples, chunk->count,
                                                 a->config->language, a->config->translate_to_english,
+                                                prompt_copy,
                                                 &err);
             const gint64 t1_us = g_get_monotonic_time();
             dbg_chunk(a, "worker: transcribe done in %.2fs (text_len=%zu)",
@@ -615,6 +620,7 @@ static gpointer worker_thread_main(gpointer data) {
                 }
             }
             free(err);
+            free(prompt_copy);
             if (text && *text) {
                 g_mutex_lock(&a->accum_mutex);
                 if (a->accum_text->len > 0) g_string_append_c(a->accum_text, ' ');

@@ -18,6 +18,7 @@ typedef struct {
     char *overlay_position; // "screen" or "target"
     bool paste_each_chunk;  // X11 only; paste on VAD pause
     char *chunk_output;     // "target", "overlay", or "both"
+    char *initial_prompt;   // optional, max 244 chars (whisper.cpp limit)
 } Config;
 
 // Get XDG paths

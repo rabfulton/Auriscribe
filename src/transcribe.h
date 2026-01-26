@@ -27,6 +27,7 @@ char *transcriber_process(Transcriber *t, const float *samples, size_t count,
                           const char *language, bool translate);
 char *transcriber_process_ex(Transcriber *t, const float *samples, size_t count,
                              const char *language, bool translate,
+                             const char *initial_prompt,
                              char **error_out);
 
 #endif

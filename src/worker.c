@@ -232,7 +232,8 @@ static char *trim_leading_space(char *s) {
 }
 
 static char *whisper_run(struct whisper_context *ctx, const float *samples, int n_samples,
-                         const char *language, bool translate, int n_threads) {
+                         const char *language, bool translate, int n_threads,
+                         const char *initial_prompt) {
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.n_threads = n_threads;
     params.print_progress = false;
@@ -242,6 +243,9 @@ static char *whisper_run(struct whisper_context *ctx, const float *samples, int 
     params.translate = translate;
     params.single_segment = true;
     params.no_context = true;
+    if (initial_prompt && *initial_prompt) {
+        params.initial_prompt = initial_prompt;
+    }
 
     if (language && *language) {
         params.language = language;
@@ -356,6 +360,7 @@ int main(int argc, char **argv) {
 
             uint32_t n_samples_u32 = 0;
             uint32_t lang_len = 0;
+            uint32_t prompt_len = 0;
             uint8_t translate = 0;
             uint32_t n_threads = 0;
 
@@ -366,8 +371,21 @@ int main(int argc, char **argv) {
                 (void)write_msg(out_fd, 'E', "Out of memory");
                 continue;
             }
+
+            if (!read_u32(in_fd, &prompt_len)) {
+                free(lang);
+                break;
+            }
+            char *prompt = read_bytes_str(in_fd, prompt_len);
+            if (!prompt && prompt_len != 0) {
+                free(lang);
+                (void)write_msg(out_fd, 'E', "Out of memory");
+                continue;
+            }
+
             if (!read_u8(in_fd, &translate) || !read_u32(in_fd, &n_threads)) {
                 free(lang);
+                free(prompt);
                 break;
             }
 
@@ -377,19 +395,22 @@ int main(int argc, char **argv) {
                 samples = malloc(n_samples * sizeof(float));
                 if (!samples) {
                     free(lang);
+                    free(prompt);
                     (void)write_msg(out_fd, 'E', "Out of memory");
                     continue;
                 }
                 if (!read_exact(in_fd, samples, n_samples * sizeof(float))) {
                     free(samples);
                     free(lang);
+                    free(prompt);
                     break;
                 }
             }
 
-            char *text = whisper_run(ctx, samples, (int)n_samples_u32, lang, translate != 0, (int)n_threads);
+            char *text = whisper_run(ctx, samples, (int)n_samples_u32, lang, translate != 0, (int)n_threads, prompt);
             free(samples);
             free(lang);
+            free(prompt);
 
             if (!text) {
                 (void)write_msg(out_fd, 'E', "Transcription failed");

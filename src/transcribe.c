@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -119,6 +120,7 @@ struct Transcriber {
     pid_t worker_pid;
     int to_worker_fd;
     int from_worker_fd;
+    int err_fd;
     bool loaded;
     bool loading;
     bool load_failed;
@@ -128,8 +130,10 @@ static void transcriber_kill_worker(Transcriber *t) {
     if (!t) return;
     if (t->to_worker_fd != -1) close(t->to_worker_fd);
     if (t->from_worker_fd != -1) close(t->from_worker_fd);
+    if (t->err_fd != -1) close(t->err_fd);
     t->to_worker_fd = -1;
     t->from_worker_fd = -1;
+    t->err_fd = -1;
 
     if (t->worker_pid > 0) {
         // Try graceful.
@@ -153,9 +157,15 @@ static void transcriber_kill_worker(Transcriber *t) {
 static bool transcriber_start_worker(Transcriber *t) {
     int to_child[2] = {-1, -1};
     int from_child[2] = {-1, -1};
+    int err_child[2] = {-1, -1};
     if (pipe(to_child) != 0) return false;
     if (pipe(from_child) != 0) {
         close(to_child[0]); close(to_child[1]);
+        return false;
+    }
+    if (pipe(err_child) != 0) {
+        close(to_child[0]); close(to_child[1]);
+        close(from_child[0]); close(from_child[1]);
         return false;
     }
 
@@ -163,8 +173,10 @@ static bool transcriber_start_worker(Transcriber *t) {
     if (pid == 0) {
         dup2(to_child[0], STDIN_FILENO);
         dup2(from_child[1], STDOUT_FILENO);
+        dup2(err_child[1], STDERR_FILENO);
         close(to_child[0]); close(to_child[1]);
         close(from_child[0]); close(from_child[1]);
+        close(err_child[0]); close(err_child[1]);
 
         // Dev (run from build dir) + installed (in PATH).
         execl("./auriscribe-worker", "auriscribe-worker", NULL);
@@ -175,16 +187,61 @@ static bool transcriber_start_worker(Transcriber *t) {
     if (pid < 0) {
         close(to_child[0]); close(to_child[1]);
         close(from_child[0]); close(from_child[1]);
+        close(err_child[0]); close(err_child[1]);
         return false;
     }
 
     close(to_child[0]);
     close(from_child[1]);
+    close(err_child[1]);
 
     t->worker_pid = pid;
     t->to_worker_fd = to_child[1];
     t->from_worker_fd = from_child[0];
+    t->err_fd = err_child[0];
+    (void)fcntl(t->err_fd, F_SETFL, fcntl(t->err_fd, F_GETFL, 0) | O_NONBLOCK);
     return true;
+}
+
+static char *read_worker_stderr_nonblocking(int fd) {
+    if (fd < 0) return NULL;
+    char buf[4096];
+    size_t cap = 0;
+    size_t len = 0;
+    char *out = NULL;
+
+    for (;;) {
+        ssize_t r = read(fd, buf, sizeof(buf));
+        if (r == 0) break;
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if ((size_t)r > 0) {
+            if (len + (size_t)r + 1 > cap) {
+                size_t ncap = cap ? cap * 2 : 8192;
+                while (ncap < len + (size_t)r + 1) ncap *= 2;
+                char *p = realloc(out, ncap);
+                if (!p) break;
+                out = p;
+                cap = ncap;
+            }
+            memcpy(out + len, buf, (size_t)r);
+            len += (size_t)r;
+        }
+    }
+
+    if (!out) return NULL;
+    out[len] = '\0';
+
+    // Keep the tail (most relevant error lines).
+    const size_t max = 2000;
+    if (len > max) {
+        size_t start = len - max;
+        memmove(out, out + start, max);
+        out[max] = '\0';
+    }
+    return out;
 }
 
 Transcriber *transcriber_new(void) {
@@ -193,6 +250,7 @@ Transcriber *transcriber_new(void) {
     t->worker_pid = 0;
     t->to_worker_fd = -1;
     t->from_worker_fd = -1;
+    t->err_fd = -1;
     t->loaded = false;
     t->loading = false;
     t->load_failed = false;
@@ -306,8 +364,10 @@ void transcriber_unload(Transcriber *t) {
     // Close pipes; reap child.
     if (t->to_worker_fd != -1) close(t->to_worker_fd);
     if (t->from_worker_fd != -1) close(t->from_worker_fd);
+    if (t->err_fd != -1) close(t->err_fd);
     t->to_worker_fd = -1;
     t->from_worker_fd = -1;
+    t->err_fd = -1;
     (void)waitpid(t->worker_pid, NULL, 0);
     t->worker_pid = 0;
     t->loaded = false;
@@ -336,11 +396,12 @@ EngineType transcriber_get_type(Transcriber *t) {
 
 char *transcriber_process(Transcriber *t, const float *samples, size_t count,
                           const char *language, bool translate) {
-    return transcriber_process_ex(t, samples, count, language, translate, NULL);
+    return transcriber_process_ex(t, samples, count, language, translate, NULL, NULL);
 }
 
 char *transcriber_process_ex(Transcriber *t, const float *samples, size_t count,
                              const char *language, bool translate,
+                             const char *initial_prompt,
                              char **error_out) {
     if (error_out) *error_out = NULL;
     if (!t) return NULL;
@@ -383,10 +444,14 @@ char *transcriber_process_ex(Transcriber *t, const float *samples, size_t count,
     const uint32_t n_samples = (uint32_t)count;
     const char *lang = (language && strcmp(language, "auto") != 0) ? language : "";
     const uint32_t lang_len = (uint32_t)strlen(lang);
+    const char *prompt = initial_prompt ? initial_prompt : "";
+    const uint32_t prompt_len = (uint32_t)strlen(prompt);
 
     if (!write_u32(t->to_worker_fd, n_samples) ||
         !write_u32(t->to_worker_fd, lang_len) ||
         (lang_len && !write_exact(t->to_worker_fd, lang, lang_len)) ||
+        !write_u32(t->to_worker_fd, prompt_len) ||
+        (prompt_len && !write_exact(t->to_worker_fd, prompt, prompt_len)) ||
         !write_u8(t->to_worker_fd, translate ? 1 : 0) ||
         !write_u32(t->to_worker_fd, (uint32_t)transcriber_threads()) ||
         (n_samples && !write_exact(t->to_worker_fd, samples, (size_t)n_samples * sizeof(float)))) {
@@ -408,7 +473,24 @@ char *transcriber_process_ex(Transcriber *t, const float *samples, size_t count,
     }
 
     if (error_out) {
-        *error_out = payload; // caller frees
+        char *stderr_tail = read_worker_stderr_nonblocking(t->err_fd);
+        if (stderr_tail && *stderr_tail) {
+            const char *p = payload ? payload : "Transcription failed";
+            const size_t n = strlen(p) + strlen("\n\n") + strlen(stderr_tail) + 1;
+            char *msg = malloc(n);
+            if (msg) {
+                snprintf(msg, n, "%s\n\n%s", p, stderr_tail);
+                free(payload);
+                free(stderr_tail);
+                *error_out = msg;
+            } else {
+                free(stderr_tail);
+                *error_out = payload;
+            }
+        } else {
+            free(stderr_tail);
+            *error_out = payload; // caller frees
+        }
         return NULL;
     }
 
