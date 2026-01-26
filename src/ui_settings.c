@@ -22,6 +22,8 @@ typedef struct {
     GtkWidget *autostart_check;
     GtkWidget *overlay_check;
     GtkWidget *overlay_pos_combo;
+    GtkWidget *paste_each_chunk_check;
+    GtkWidget *chunk_output_combo;
     GtkWidget *model_path_entry;
     bool capturing_hotkey;
 } SettingsDialog;
@@ -200,6 +202,11 @@ static void settings_apply(SettingsDialog *sd) {
     const char *pos = gtk_combo_box_get_active_id(GTK_COMBO_BOX(sd->overlay_pos_combo));
     sd->cfg->overlay_position = strdup(pos ? pos : "screen");
 
+    sd->cfg->paste_each_chunk = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sd->paste_each_chunk_check));
+    free(sd->cfg->chunk_output);
+    const char *out = gtk_combo_box_get_active_id(GTK_COMBO_BOX(sd->chunk_output_combo));
+    sd->cfg->chunk_output = strdup(out ? out : "target");
+
     // Save model path
     free(sd->cfg->model_path);
     const char *path = gtk_entry_get_text(GTK_ENTRY(sd->model_path_entry));
@@ -367,6 +374,18 @@ void settings_dialog_show(GtkWindow *parent, Config *cfg) {
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sd->overlay_pos_combo), "target", "Target window center (X11)");
     gtk_combo_box_set_active_id(GTK_COMBO_BOX(sd->overlay_pos_combo), cfg->overlay_position ? cfg->overlay_position : "screen");
     gtk_grid_attach(GTK_GRID(grid), sd->overlay_pos_combo, 1, row++, 1, 1);
+
+    sd->paste_each_chunk_check = gtk_check_button_new_with_label("Paste each chunk while recording (X11)");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sd->paste_each_chunk_check), cfg->paste_each_chunk);
+    gtk_grid_attach(GTK_GRID(grid), sd->paste_each_chunk_check, 0, row++, 2, 1);
+
+    gtk_grid_attach(GTK_GRID(grid), create_label("Chunk output:"), 0, row, 1, 1);
+    sd->chunk_output_combo = gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sd->chunk_output_combo), "target", "Target window");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sd->chunk_output_combo), "overlay", "Overlay");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(sd->chunk_output_combo), "both", "Both");
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(sd->chunk_output_combo), cfg->chunk_output ? cfg->chunk_output : "target");
+    gtk_grid_attach(GTK_GRID(grid), sd->chunk_output_combo, 1, row++, 1, 1);
     
     g_signal_connect(sd->hotkey_entry, "changed", G_CALLBACK(on_hotkey_entry_changed), sd);
     g_signal_connect(sd->dialog, "key-press-event", G_CALLBACK(on_dialog_key_press), sd);

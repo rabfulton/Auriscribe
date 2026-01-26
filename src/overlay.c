@@ -1,6 +1,7 @@
 #include "overlay.h"
 #include "app.h"
 #include <gtk/gtk.h>
+#include <pango/pangocairo.h>
 #include <math.h>
 #include <string.h>
 #include <X11/Xlib.h>
@@ -99,8 +100,9 @@ static gboolean overlay_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
     const int w = a->overlay_w;
     const int h = a->overlay_h;
     const double cx = w / 2.0;
-    const double cy = h / 2.0;
-    const double radius = (w < h ? w : h) * 0.38;
+    const double radius = w * 0.34;
+    const double margin = w * 0.10;
+    const double cy = margin + radius * 1.05;
 
     const double t = a->overlay_phase;
     const double level = a->overlay_level_smooth; // 0..1
@@ -150,6 +152,30 @@ static gboolean overlay_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
         cairo_arc(cr, x + r, y + r, r, M_PI, 3 * M_PI_2);
         cairo_close_path(cr);
         cairo_fill(cr);
+    }
+
+    // Transcript preview below.
+    const double text_top = cy + radius * 1.20;
+    if (a->overlay_text && a->overlay_text->len > 0 && text_top < (double)h) {
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.92);
+
+        PangoLayout *layout = pango_cairo_create_layout(cr);
+        PangoFontDescription *fd = pango_font_description_from_string("Sans 14");
+        pango_layout_set_font_description(layout, fd);
+        pango_font_description_free(fd);
+
+        pango_layout_set_width(layout, (int)((w - 2 * margin) * PANGO_SCALE));
+        pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+        // Show the most recent transcript (tail), and bound the on-screen height.
+        pango_layout_set_height(layout, -3);
+        pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_START);
+        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+
+        pango_layout_set_text(layout, a->overlay_text->str, -1);
+
+        cairo_move_to(cr, margin, text_top);
+        pango_cairo_show_layout(cr, layout);
+        g_object_unref(layout);
     }
 
     return FALSE;
@@ -222,7 +248,7 @@ void overlay_show(App *a) {
     }
     const int sz = overlay_pick_size_for_point(cx, cy);
     a->overlay_w = sz;
-    a->overlay_h = sz;
+    a->overlay_h = (int)lrint((double)sz * 1.55);
     a->overlay_phase = 0.0;
     a->overlay_level_smooth = (double)g_atomic_int_get(&a->overlay_level_i) / 1000.0;
     a->overlay_last_pos_us = 0;
@@ -280,4 +306,26 @@ void overlay_set_level(App *a, float level_0_to_1) {
     if (level_0_to_1 > 1) level_0_to_1 = 1;
     atomic_store(&a->overlay_level_us, g_get_monotonic_time());
     g_atomic_int_set(&a->overlay_level_i, (int)lrintf(level_0_to_1 * 1000.0f));
+}
+
+void overlay_append_text(App *a, const char *text) {
+    if (!a || !a->overlay_text || !text || !*text) return;
+    if (a->overlay_text->len > 0 && text[0] != ' ' && text[0] != '\n' && text[0] != '\t') {
+        g_string_append_c(a->overlay_text, ' ');
+    }
+    g_string_append(a->overlay_text, text);
+
+    // Keep the overlay preview bounded so it doesn't grow without limit.
+    const size_t max_chars = 280;
+    if (a->overlay_text->len > max_chars) {
+        const size_t cut = a->overlay_text->len - max_chars;
+        g_string_erase(a->overlay_text, 0, (gssize)cut);
+        // Trim to a word boundary-ish.
+        while (a->overlay_text->len > 0 && a->overlay_text->str[0] != ' ') {
+            g_string_erase(a->overlay_text, 0, 1);
+        }
+        while (a->overlay_text->len > 0 && a->overlay_text->str[0] == ' ') {
+            g_string_erase(a->overlay_text, 0, 1);
+        }
+    }
 }

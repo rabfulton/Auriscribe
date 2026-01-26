@@ -31,6 +31,8 @@ static void schedule_model_unload_timer(App *a);
 static gboolean unload_model_timeout_cb(gpointer data);
 static void pad_recording_tail(App *a);
 static void start_vulkan_warmup_async(void);
+static gboolean overlay_append_idle(gpointer data);
+static gboolean show_transcribe_error_idle(gpointer data);
 
 typedef struct {
     float *samples;
@@ -41,6 +43,15 @@ typedef struct {
 typedef struct {
     unsigned long target_window;
 } FinalizePaste;
+
+typedef struct {
+    App *app;
+    char *text;
+} OverlayAppend;
+
+typedef struct {
+    char *message;
+} ErrorDialog;
 
 static int chunk_queue_sentinel;
 #define CHUNK_QUEUE_SENTINEL ((gpointer) &chunk_queue_sentinel)
@@ -177,7 +188,9 @@ void app_init(GtkApplication *gtk_app) {
     app->chunk_queue = g_async_queue_new();
     g_mutex_init(&app->accum_mutex);
     app->accum_text = g_string_new("");
+    app->overlay_text = g_string_new("");
     app->stop_requested = false;
+    app->pasted_any = 0;
     app->debug_chunking = env_get("AURISCRIBE_DEBUG_CHUNKING", "XFCE_WHISPER_DEBUG_CHUNKING") != NULL;
     app->debug_last_vad_speech = false;
     app->debug_audio_cb_count = 0;
@@ -237,6 +250,10 @@ void app_cleanup(void) {
     if (app->accum_text) {
         g_string_free(app->accum_text, TRUE);
         app->accum_text = NULL;
+    }
+    if (app->overlay_text) {
+        g_string_free(app->overlay_text, TRUE);
+        app->overlay_text = NULL;
     }
     g_mutex_clear(&app->accum_mutex);
 
@@ -457,6 +474,9 @@ void app_start_recording(void) {
     app->vad_accum_count = 0;
     vad_reset(app->vad);
     overlay_set_level(app, 0.0f);
+    g_atomic_int_set(&app->pasted_any, 0);
+    g_atomic_int_set(&app->shown_transcribe_error, 0);
+    if (app->overlay_text) g_string_assign(app->overlay_text, "");
 
     // Capture target window early so we can paste back into it later (X11 only).
     app->target_x11_window = x11_get_active_window();
@@ -563,17 +583,79 @@ static gpointer worker_thread_main(gpointer data) {
 
             const gint64 t0_us = g_get_monotonic_time();
             dbg_chunk(a, "worker: processing chunk samples=%zu secs=%.2f", chunk->count, (double)chunk->count / (double)SAMPLE_RATE);
-            char *text = transcriber_process(a->transcriber, chunk->samples, chunk->count,
-                                             a->config->language, a->config->translate_to_english);
+            char *err = NULL;
+            char *text = transcriber_process_ex(a->transcriber, chunk->samples, chunk->count,
+                                                a->config->language, a->config->translate_to_english,
+                                                &err);
             const gint64 t1_us = g_get_monotonic_time();
             dbg_chunk(a, "worker: transcribe done in %.2fs (text_len=%zu)",
                       (double)(t1_us - t0_us) / 1000000.0,
                       text ? strlen(text) : 0);
+            if (!text && err && !g_atomic_int_get(&a->shown_transcribe_error)) {
+                ErrorDialog *ed = calloc(1, sizeof(*ed));
+                if (ed) {
+                    if (strstr(err, "ErrorOutOfDeviceMemory") || strstr(err, "out of device memory")) {
+                        ed->message = strdup(
+                            "GPU ran out of memory while transcribing.\n\n"
+                            "Try one of:\n"
+                            "- Select a smaller model\n"
+                            "- Disable GPU (set AURISCRIBE_NO_GPU=1)\n"
+                            "- Close other GPU-heavy apps\n\n"
+                            "Details:\n");
+                        if (ed->message) {
+                            const size_t n = strlen(ed->message) + strlen(err) + 1;
+                            ed->message = realloc(ed->message, n);
+                            if (ed->message) strcat(ed->message, err);
+                        }
+                    } else {
+                        ed->message = strdup(err);
+                    }
+                    g_idle_add(show_transcribe_error_idle, ed);
+                    g_atomic_int_set(&a->shown_transcribe_error, 1);
+                }
+            }
+            free(err);
             if (text && *text) {
                 g_mutex_lock(&a->accum_mutex);
                 if (a->accum_text->len > 0) g_string_append_c(a->accum_text, ' ');
                 g_string_append(a->accum_text, text);
                 g_mutex_unlock(&a->accum_mutex);
+
+                // Live overlay transcript preview (main thread).
+                const bool out_overlay = a->config && a->config->chunk_output && (strcmp(a->config->chunk_output, "overlay") == 0 || strcmp(a->config->chunk_output, "both") == 0);
+                const bool out_target = a->config && a->config->chunk_output && (strcmp(a->config->chunk_output, "target") == 0 || strcmp(a->config->chunk_output, "both") == 0);
+                if (out_overlay) {
+                    OverlayAppend *oa = calloc(1, sizeof(*oa));
+                    if (oa) {
+                        oa->app = a;
+                        oa->text = strdup(text);
+                        g_idle_add(overlay_append_idle, oa);
+                    }
+                }
+
+                // Optional: paste each chunk immediately (X11 target window captured at start).
+                if (a->config && a->config->paste_each_chunk && out_target) {
+                    const bool is_wayland = getenv("WAYLAND_DISPLAY") != NULL;
+                    if (!is_wayland) {
+                        char *to_paste = NULL;
+                        if (g_atomic_int_get(&a->pasted_any) && text[0] != ' ' && text[0] != '\n' && text[0] != '\t') {
+                            to_paste = malloc(strlen(text) + 2);
+                            if (to_paste) {
+                                to_paste[0] = ' ';
+                                strcpy(to_paste + 1, text);
+                            }
+                        }
+                        const char *payload = to_paste ? to_paste : text;
+
+                        PasteMethod method = PASTE_AUTO;
+                        if (a->config->paste_method && strcmp(a->config->paste_method, "xdotool") == 0) method = PASTE_XDOTOOL;
+                        else if (a->config->paste_method && strcmp(a->config->paste_method, "clipboard") == 0) method = PASTE_CLIPBOARD;
+
+                        (void)paste_text_to_x11_window(payload, method, a->target_x11_window);
+                        g_atomic_int_set(&a->pasted_any, 1);
+                        free(to_paste);
+                    }
+                }
             }
             free(text);
         }
@@ -582,6 +664,39 @@ static gpointer worker_thread_main(gpointer data) {
         free(chunk);
     }
     return NULL;
+}
+
+static gboolean overlay_append_idle(gpointer data) {
+    OverlayAppend *oa = data;
+    if (!oa) return G_SOURCE_REMOVE;
+    App *a = oa->app;
+    if (a && !a->shutting_down && a->overlay_window && oa->text && *oa->text) {
+        overlay_append_text(a, oa->text);
+        if (a->overlay_area) gtk_widget_queue_draw(a->overlay_area);
+    }
+    free(oa->text);
+    free(oa);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean show_transcribe_error_idle(gpointer data) {
+    ErrorDialog *ed = data;
+    if (!ed) return G_SOURCE_REMOVE;
+    if (app && !app->shutting_down) {
+        GtkWidget *dlg = gtk_message_dialog_new(
+            NULL,
+            GTK_DIALOG_MODAL,
+            GTK_MESSAGE_ERROR,
+            GTK_BUTTONS_OK,
+            "%s",
+            ed->message ? ed->message : "Transcription failed");
+        gtk_window_set_title(GTK_WINDOW(dlg), "Auriscribe error");
+        gtk_dialog_run(GTK_DIALOG(dlg));
+        gtk_widget_destroy(dlg);
+    }
+    free(ed->message);
+    free(ed);
+    return G_SOURCE_REMOVE;
 }
 
 static gboolean finalize_paste_idle(gpointer data) {
@@ -598,7 +713,8 @@ static gboolean finalize_paste_idle(gpointer data) {
     }
     g_mutex_unlock(&app->accum_mutex);
 
-    if (final_text && *final_text) {
+    const bool out_target = app->config && app->config->chunk_output && (strcmp(app->config->chunk_output, "target") == 0 || strcmp(app->config->chunk_output, "both") == 0);
+    if (final_text && *final_text && !(app->config && app->config->paste_each_chunk && out_target)) {
         PasteMethod method = PASTE_AUTO;
         if (app->config->paste_method && strcmp(app->config->paste_method, "xdotool") == 0) method = PASTE_XDOTOOL;
         else if (app->config->paste_method && strcmp(app->config->paste_method, "wtype") == 0) method = PASTE_WTYPE;

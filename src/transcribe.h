@@ -25,5 +25,8 @@ EngineType transcriber_get_type(Transcriber *t);
 // Returns allocated string, caller must free
 char *transcriber_process(Transcriber *t, const float *samples, size_t count,
                           const char *language, bool translate);
+char *transcriber_process_ex(Transcriber *t, const float *samples, size_t count,
+                             const char *language, bool translate,
+                             char **error_out);
 
 #endif

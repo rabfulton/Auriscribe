@@ -43,12 +43,15 @@ typedef struct App {
     unsigned long target_x11_window;
     float vad_accum[480];
     size_t vad_accum_count;
+    gint pasted_any;
+    gint shown_transcribe_error;
 
     // Chunking + background transcription
     GAsyncQueue *chunk_queue;
     GThread *worker_thread;
     GMutex accum_mutex;
     GString *accum_text;
+    GString *overlay_text;
     bool stop_requested;
     
     // UI elements

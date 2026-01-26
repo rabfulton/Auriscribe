@@ -16,6 +16,8 @@ typedef struct {
     bool autostart;
     bool overlay_enabled;
     char *overlay_position; // "screen" or "target"
+    bool paste_each_chunk;  // X11 only; paste on VAD pause
+    char *chunk_output;     // "target", "overlay", or "both"
 } Config;
 
 // Get XDG paths

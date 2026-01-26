@@ -336,6 +336,13 @@ EngineType transcriber_get_type(Transcriber *t) {
 
 char *transcriber_process(Transcriber *t, const float *samples, size_t count,
                           const char *language, bool translate) {
+    return transcriber_process_ex(t, samples, count, language, translate, NULL);
+}
+
+char *transcriber_process_ex(Transcriber *t, const float *samples, size_t count,
+                             const char *language, bool translate,
+                             char **error_out) {
+    if (error_out) *error_out = NULL;
     if (!t) return NULL;
 
     if (t->loading && !t->loaded) {
@@ -346,11 +353,13 @@ char *transcriber_process(Transcriber *t, const float *samples, size_t count,
             t->loading = false;
             t->load_failed = true;
             transcriber_kill_worker(t);
+            if (error_out) *error_out = strdup("Failed to load model (worker communication error)");
             return NULL;
         }
         const bool ok = (resp_type == 'O');
-        if (!ok) {
-            fprintf(stderr, "Worker load failed: %s\n", payload ? payload : "");
+        if (!ok && error_out) {
+            *error_out = payload ? payload : strdup("Failed to load model");
+            payload = NULL;
         }
         free(payload);
         t->loading = false;
@@ -367,6 +376,7 @@ char *transcriber_process(Transcriber *t, const float *samples, size_t count,
 
     if (!send_magic_cmd(t->to_worker_fd, 'T')) {
         transcriber_kill_worker(t);
+        if (error_out) *error_out = strdup("Worker communication error");
         return NULL;
     }
 
@@ -381,6 +391,7 @@ char *transcriber_process(Transcriber *t, const float *samples, size_t count,
         !write_u32(t->to_worker_fd, (uint32_t)transcriber_threads()) ||
         (n_samples && !write_exact(t->to_worker_fd, samples, (size_t)n_samples * sizeof(float)))) {
         transcriber_kill_worker(t);
+        if (error_out) *error_out = strdup("Worker communication error");
         return NULL;
     }
 
@@ -388,11 +399,17 @@ char *transcriber_process(Transcriber *t, const float *samples, size_t count,
     char *payload = NULL;
     if (!read_msg(t->from_worker_fd, &resp_type, &payload)) {
         transcriber_kill_worker(t);
+        if (error_out) *error_out = strdup("Worker communication error");
         return NULL;
     }
 
     if (resp_type == 'R') {
         return payload; // already allocated
+    }
+
+    if (error_out) {
+        *error_out = payload; // caller frees
+        return NULL;
     }
 
     fprintf(stderr, "Worker error: %s\n", payload ? payload : "");

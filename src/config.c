@@ -81,6 +81,8 @@ Config *config_new_default(void) {
     cfg->autostart = false;
     cfg->overlay_enabled = false;
     cfg->overlay_position = strdup("screen");
+    cfg->paste_each_chunk = false;
+    cfg->chunk_output = strdup("target");
     return cfg;
 }
 
@@ -93,6 +95,7 @@ void config_free(Config *cfg) {
     free(cfg->paste_method);
     free(cfg->microphone);
     free(cfg->overlay_position);
+    free(cfg->chunk_output);
     free(cfg);
 }
 
@@ -144,6 +147,10 @@ Config *config_load(void) {
         cfg->overlay_enabled = json_object_get_boolean(val);
     if (json_object_object_get_ex(root, "overlay_position", &val))
         cfg->overlay_position = strdup_safe(json_object_get_string(val));
+    if (json_object_object_get_ex(root, "paste_each_chunk", &val))
+        cfg->paste_each_chunk = json_object_get_boolean(val);
+    if (json_object_object_get_ex(root, "chunk_output", &val))
+        cfg->chunk_output = strdup_safe(json_object_get_string(val));
 
     json_object_put(root);
 
@@ -154,6 +161,7 @@ Config *config_load(void) {
     if (!cfg->paste_method) cfg->paste_method = strdup("auto");
     if (cfg->vad_threshold == 0) cfg->vad_threshold = 0.02f;
     if (!cfg->overlay_position) cfg->overlay_position = strdup("screen");
+    if (!cfg->chunk_output) cfg->chunk_output = strdup("target");
 
     return cfg;
 }
@@ -175,6 +183,8 @@ void config_save(const Config *cfg) {
     json_object_object_add(root, "autostart", json_object_new_boolean(cfg->autostart));
     json_object_object_add(root, "overlay_enabled", json_object_new_boolean(cfg->overlay_enabled));
     json_object_object_add(root, "overlay_position", json_object_new_string(cfg->overlay_position ? cfg->overlay_position : "screen"));
+    json_object_object_add(root, "paste_each_chunk", json_object_new_boolean(cfg->paste_each_chunk));
+    json_object_object_add(root, "chunk_output", json_object_new_string(cfg->chunk_output ? cfg->chunk_output : "target"));
 
     char path[600];
     snprintf(path, sizeof(path), "%s/settings.json", config_get_dir());
