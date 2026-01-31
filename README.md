@@ -105,5 +105,6 @@ Examples:
 
 ## Other Useful Projects
 
-- Try my AI panel plugin for XFCE, [XFCE Ask](https://github.com/rabfulton/xfce-ask)
-- For many more features try out [ChatGTK](https://github.com/rabfulton/ChatGTK)
+- Try my AI panel plugin for XFCE [XFCE Ask](https://github.com/rabfulton/xfce-ask)
+- For a feature complete AI application try out [ChatGTK](https://github.com/rabfulton/ChatGTK)
+- A Markdown note taking application for the system tray [TrayMD](https://github.com/rabfulton/TrayMD)
