@@ -287,7 +287,7 @@ static gboolean unload_model_timeout_cb(gpointer data) {
     if (!a || a->shutting_down) return G_SOURCE_REMOVE;
 
     if (a->state != STATE_IDLE) return G_SOURCE_REMOVE;
-    if (!transcriber_is_loaded(a->transcriber)) return G_SOURCE_REMOVE;
+    if (!transcriber_is_active(a->transcriber)) return G_SOURCE_REMOVE;
 
     fprintf(stderr, "Idle timeout reached; unloading model to free memory\n");
     transcriber_unload(a->transcriber);

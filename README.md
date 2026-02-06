@@ -108,3 +108,5 @@ Examples:
 - Try my AI panel plugin for XFCE [XFCE Ask](https://github.com/rabfulton/xfce-ask)
 - For a feature complete AI application try out [ChatGTK](https://github.com/rabfulton/ChatGTK)
 - A Markdown note taking application for the system tray [TrayMD](https://github.com/rabfulton/TrayMD)
+- A lightweight local movie database and browser [ReelVault](https://github.com/rabfulton/ReelVault)
+- A minimal image viewer with some basic editing functions [preditor](https://github.com/rabfulton/preditor)

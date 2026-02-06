@@ -390,6 +390,10 @@ bool transcriber_is_loading(Transcriber *t) {
     return t && t->loading;
 }
 
+bool transcriber_is_active(Transcriber *t) {
+    return t && t->worker_pid > 0;
+}
+
 EngineType transcriber_get_type(Transcriber *t) {
     return t ? t->type : ENGINE_NONE;
 }

@@ -20,6 +20,7 @@ void transcriber_free(Transcriber *t);
 
 bool transcriber_is_loaded(Transcriber *t);
 bool transcriber_is_loading(Transcriber *t);
+bool transcriber_is_active(Transcriber *t);
 EngineType transcriber_get_type(Transcriber *t);
 
 // Returns allocated string, caller must free
